@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
   push: {}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -16,13 +19,44 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install dependencies
-        run: npm ci
+      - name: npm ci
+        id: npmci
+        continue-on-error: true
+        run: npm ci --no-audit --no-fund
+
+      - name: Regenerate lockfile (package-lock only)
+        if: steps.npmci.outcome != 'success' && github.actor != 'github-actions[bot]'
+        run: |
+          rm -rf node_modules
+          npm install --package-lock-only --no-audit --no-fund
+
+      - name: Commit & push regenerated lockfile
+        if: steps.npmci.outcome != 'success' && github.actor != 'github-actions[bot]'
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "No lockfile changes; nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore: regenerate package-lock [ci-lockfile]"
+          git push
+
+      - name: Stop this run after lockfile push
+        if: steps.npmci.outcome != 'success' && github.actor != 'github-actions[bot]'
+        run: exit 1
+
+      - name: Install dependencies (final)
+        if: steps.npmci.outcome == 'success'
+        run: echo "npm ci OK"
 
       - name: Build vendors
         run: npm run build

@@ -38,3 +38,4 @@ npm run start          # Electron 起動
 
 ## 5. CI ビルド
 GitHub Actions では `npm ci` → `npm run build` → `npm run dist` を実行し、macOS/Windows のアーティファクトを生成します。
+`npm ci` が lockfile 不整合で失敗した場合は、Actions が `package-lock.json` を自動再生成してコミットし、次の実行で再ビルドします。
