@@ -1,26 +1,71 @@
 name: build
 
 on:
+  pull_request:
+    branches: [main]
   workflow_dispatch:
-  push:
-    branches: [ main, master ]
+  push: {}
+
+permissions:
+  contents: write
 
 jobs:
   build:
+    env:
+      CHECKOUT_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+      COMMIT_MESSAGE: ${{ github.event.head_commit.message || github.event.pull_request.title || '' }}
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: ${{ env.CHECKOUT_REF }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install dependencies
-        run: npm install
+      - name: npm ci
+        id: npmci
+        continue-on-error: true
+        run: npm ci --no-audit --no-fund
+
+      - name: Regenerate lockfile (package-lock only, non-Windows)
+        if: steps.npmci.outcome != 'success' && !contains(env.COMMIT_MESSAGE, '[ci-lockfile]') && runner.os != 'Windows'
+        shell: bash
+        run: |
+          rm -rf node_modules
+          npm install --package-lock-only --no-audit --no-fund
+          rm -rf node_modules
+          npm ci --no-audit --no-fund
+
+      - name: Regenerate lockfile (package-lock only, Windows)
+        if: steps.npmci.outcome != 'success' && !contains(env.COMMIT_MESSAGE, '[ci-lockfile]') && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Test-Path node_modules) { Remove-Item -Recurse -Force node_modules }
+          npm install --package-lock-only --no-audit --no-fund
+          if (Test-Path node_modules) { Remove-Item -Recurse -Force node_modules }
+          npm ci --no-audit --no-fund
+
+      - name: Commit & push regenerated lockfile
+        if: steps.npmci.outcome != 'success' && !contains(env.COMMIT_MESSAGE, '[ci-lockfile]')
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "No lockfile changes; nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore: regenerate package-lock [ci-lockfile]"
+          git push
 
       - name: Build vendors
         run: npm run build
