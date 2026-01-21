@@ -1,30 +1,42 @@
 import fs from 'fs/promises';
 import path from 'path';
-import sharp from 'sharp';
-import toIco from 'to-ico';
-import pngToIcns from 'png-to-icns';
+import { spawn } from 'node:child_process';
+import { Resvg } from '@resvg/resvg-js';
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const svgPath = path.join(root, 'assets', 'icon.svg');
-const outIco = path.join(root, 'assets', 'icon.ico');
-const outIcns = path.join(root, 'assets', 'icon.icns');
-const sizes = [16, 32, 64, 128, 256, 512];
+const repoRoot = process.env.GITHUB_WORKSPACE ?? process.cwd();
+const svgPath = path.join(repoRoot, 'assets', 'icon.svg');
+const buildDir = path.join(repoRoot, 'build');
+const outPng = path.join(buildDir, 'icon.png');
 
-const svg = await fs.readFile(svgPath);
-const pngBuffers = [];
+await fs.mkdir(buildDir, { recursive: true });
 
-for (const size of sizes) {
-  const buffer = await sharp(svg)
-    .resize(size, size, { fit: 'contain' })
-    .png()
-    .toBuffer();
-  pngBuffers.push(buffer);
-}
+const svg = await fs.readFile(svgPath, 'utf8');
+const resvg = new Resvg(svg, {
+  fitTo: {
+    mode: 'width',
+    value: 1024,
+  },
+});
+const pngData = resvg.render().asPng();
+await fs.writeFile(outPng, pngData);
 
-const icoBuffer = await toIco(pngBuffers);
-await fs.writeFile(outIco, icoBuffer);
+const runEib = () =>
+  new Promise((resolve, reject) => {
+    const child = spawn(
+      'npx',
+      ['--no-install', 'eib', '--input', outPng, '--output', buildDir, '--flatten'],
+      { stdio: 'inherit' }
+    );
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`eib failed with code ${code}`));
+    });
+  });
 
-const icnsBuffer = await pngToIcns(pngBuffers);
-await fs.writeFile(outIcns, icnsBuffer);
+await runEib();
 
 console.log('[APP] icons generated');
