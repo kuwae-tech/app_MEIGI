@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "build:vendor": "node scripts/build-supabase-bundle.mjs",
-    "build:icons": "node scripts/gen-icons.mjs",
+    "gen:icons": "node scripts/gen-icons.mjs",
+    "build:icons": "npm run gen:icons",
     "build": "npm run build:icons && node scripts/sync-xlsx.mjs && npm run build:vendor",
     "dist": "electron-builder"
   },
@@ -16,12 +17,11 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@hunlongyu/electron-icon-builder": "0.1.5",
+    "@resvg/resvg-js": "^2.6.2",
     "electron": "^29.1.0",
     "electron-builder": "^24.13.3",
-    "esbuild": "^0.21.5",
-    "png-to-icns": "^2.1.0",
-    "sharp": "^0.33.4",
-    "to-ico": "^1.1.5"
+    "esbuild": "^0.21.5"
   },
   "build": {
     "appId": "com.meigi.spot.kanri",
@@ -33,7 +33,7 @@
       "assets/**/*"
     ],
     "directories": {
-      "buildResources": "assets"
+      "buildResources": "build"
     },
     "asar": true,
     "mac": {
@@ -41,13 +41,13 @@
         "dmg",
         "zip"
       ],
-      "icon": "assets/icon.icns"
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
         "nsis"
       ],
-      "icon": "assets/icon.ico"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
