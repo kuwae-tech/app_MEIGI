@@ -1,0 +1,2854 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>名義SPOT進捗チェッカー</title>
+
+  <!-- SheetJS (xlsx) - CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#f5f5f7;
+      --card:#ffffff;
+      --text:#111;
+      --sub:#6e6e73;
+      --border:#e5e5ea;
+      --grid:#eaeaef;
+      --shadow:0 10px 28px rgba(0,0,0,.08);
+      --shadow2:0 4px 14px rgba(0,0,0,.08);
+      --blue:#0a84ff;
+      --blueSoft:rgba(10,132,255,.12);
+      --okBg:rgba(52,199,89,.12);
+      --okText:#0f5a2a;
+      --ngBg:rgba(255,59,48,.10);
+      --ngText:#8b1a12;
+      --radius:16px;
+      --radiusSm:12px;
+      --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Arial,"Hiragino Sans","Noto Sans JP",sans-serif;
+    }
+
+    html,body{height:100%}
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--text);
+      font-family:var(--font);
+      overflow:hidden; /* ページ全体スクロール禁止 */
+    }
+
+    .app{
+      height:100vh;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      padding:16px;
+      box-sizing:border-box;
+      min-height:0;
+    }
+
+    .card{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+    }
+
+    .topbar{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      padding:10px 12px;
+    }
+
+    .brand{display:flex;flex-direction:column;gap:4px;min-width:0}
+    .brand .title{font-size:18px;font-weight:760;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .brand .subtitle{font-size:12px;color:var(--sub);line-height:1.35}
+
+    .topActions{display:flex;gap:8px;align-items:center;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+
+    .btn{
+      border:none;
+      border-radius:12px;
+      padding:8px 12px;
+      font-size:12.5px;
+      font-weight:650;
+      cursor:pointer;
+      transition:transform .06s ease, box-shadow .12s ease, background .12s ease, opacity .12s ease;
+      user-select:none;
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      white-space:nowrap;
+    }
+    .btn:active{transform:translateY(1px)}
+    .btnPrimary{background:var(--blue);color:#fff;box-shadow:0 10px 20px rgba(10,132,255,.22)}
+    .btnPrimary:hover{box-shadow:0 12px 24px rgba(10,132,255,.28)}
+    .btnSecondary{background:#f2f2f7;color:#1d1d1f;border:1px solid var(--border);box-shadow:var(--shadow2)}
+    .btnSecondary:hover{background:#ededf4}
+    .btnGhost{background:transparent;color:#1d1d1f;border:1px solid var(--border)}
+    .btnGhost:hover{background:#f2f2f7}
+    .btn:disabled{opacity:.45;cursor:default;box-shadow:none}
+
+    .pill{font-size:11px;padding:4px 8px;border-radius:999px;border:1px solid var(--border);background:#fff;color:var(--sub)}
+
+    /* Diagnostics pill */
+    .pill.diagOk{background:var(--okBg);color:var(--okText);border-color:rgba(52,199,89,.25)}
+    .pill.diagNg{background:var(--ngBg);color:var(--ngText);border-color:rgba(255,59,48,.22)}
+
+
+    /* Compact drop zone */
+    .dropStrip{padding:10px 12px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+    .dropZone{
+      flex:1;
+      min-width:260px;
+      border:1px solid var(--border);
+      border-radius:14px;
+      background:#fafafa;
+      padding:10px 12px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      transition:background .12s ease, border-color .12s ease;
+    }
+    .dropZone.drag{background:var(--blueSoft);border-color:rgba(10,132,255,.35)}
+    .dzText{display:flex;flex-direction:column;gap:2px;min-width:0}
+    .dzTitle{font-size:12.5px;font-weight:700;color:#1d1d1f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .dzSub{font-size:11.5px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+    .meta{display:flex;align-items:center;gap:10px;color:var(--sub);font-size:11.5px;flex-wrap:wrap}
+    .fileName{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:360px}
+    .statusLine{display:flex;align-items:center;gap:8px}
+    .spinner{width:12px;height:12px;border-radius:999px;border:2px solid rgba(0,0,0,.12);border-top-color:rgba(10,132,255,.9);animation:spin .85s linear infinite;display:none}
+    .statusLine.loading .spinner{display:inline-block}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    .banner{margin-left:auto;padding:8px 10px;border-radius:14px;border:1px solid var(--border);font-size:12px;line-height:1.35;display:none;max-width:min(560px, 100%)}
+    .banner.ok{background:var(--okBg);color:var(--okText);border-color:rgba(52,199,89,.25)}
+    .banner.ng{background:var(--ngBg);color:var(--ngText);border-color:rgba(255,59,48,.18)}
+
+    .notices{padding:10px 12px;border-radius:14px;border:1px solid var(--border);background:#fbfbfd;color:var(--sub);font-size:11.5px;line-height:1.35;max-height:70px;overflow:auto;display:none;margin:0 12px 12px 12px}
+
+    /* Tabs row */
+    .tabsRow{padding:10px 12px;display:flex;align-items:center;justify-content:flex-start;gap:10px;flex-wrap:nowrap}
+    .seg{display:inline-flex;background:#f2f2f7;border:1px solid var(--border);border-radius:14px;padding:4px;gap:4px;flex-wrap:wrap}
+    .seg button{
+      border:none;background:transparent;border-radius:12px;
+      padding:7px 10px;font-size:12.5px;font-weight:700;color:var(--sub);
+      cursor:pointer;transition:background .12s ease, color .12s ease;
+      display:inline-flex;align-items:center;gap:8px;
+    }
+    .seg button.active{background:#fff;color:#1d1d1f;box-shadow:0 6px 14px rgba(0,0,0,.08)}
+
+    .rightTools{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;margin-left:auto}
+
+    .midTools{flex:1;display:flex;align-items:center;justify-content:center;min-width:280px;padding:0 12px}
+
+    /* Table */
+    .tableCard{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+    .tableWrap{flex:1;min-height:0;overflow:auto;border-top:1px solid var(--border)}
+
+    table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;table-layout:fixed}
+    thead th{
+      position:sticky;top:0;z-index:2;
+      background:#fbfbfd;color:var(--sub);
+      font-weight:760;text-align:left;
+      padding:10px 10px;
+      border-bottom:1px solid var(--border);
+      white-space:nowrap;
+      border-right:1px solid var(--grid);
+    }
+    thead th:last-child{border-right:none}
+
+    tbody td{
+      padding:10px 10px;
+      border-bottom:1px solid rgba(210,210,220,1);
+      vertical-align:top;
+      color:#1d1d1f;
+      white-space:normal;           /* 折り返し */
+      word-break:break-word;        /* 長い単語も折る */
+      border-right:1px solid var(--grid);
+    }
+    tbody td:last-child{border-right:none}
+
+    tbody tr:hover{background:#fafafa}
+
+    .muted{color:var(--sub)}
+
+    .badgeBtn{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-width:104px;
+      gap:8px;
+      padding:10px 14px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      font-size:14px;
+      font-weight:900;
+      letter-spacing:0.2px;
+      background:#fff;
+      color:#1d1d1f;
+      cursor:pointer;
+      user-select:none;
+      box-shadow:0 1px 0 rgba(0,0,0,0.04);
+      transition:background .12s ease, transform .06s ease;
+      max-width:100%;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .badgeBtn:active{transform:translateY(1px)}
+    .b-blue{border-color:rgba(10,132,255,.22);background:rgba(10,132,255,.08)}
+    .b-green{border-color:rgba(52,199,89,.22);background:rgba(52,199,89,.10)}
+    .b-orange{border-color:rgba(255,149,0,.22);background:rgba(255,149,0,.10)}
+    .b-red{border-color:rgba(255,59,48,.18);background:rgba(255,59,48,.08)}
+    .b-purple{border-color:rgba(88,86,214,.22);background:rgba(88,86,214,.10)}
+    .b-dark{border-color:rgba(60,60,67,.28);background:rgba(60,60,67,.10)}
+    .b-gray{border-color:rgba(142,142,147,.22);background:rgba(142,142,147,.10)}
+
+    /* Modal */
+    .modalBackdrop{position:fixed;inset:0;background:rgba(0,0,0,.28);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px;box-sizing:border-box}
+    .modal{width:min(720px, 100%);background:#fff;border:1px solid var(--border);border-radius:18px;box-shadow:0 18px 60px rgba(0,0,0,.20);overflow:hidden}
+    .modalShell{width:min(520px, 100%);background:#fff;border:1px solid var(--border);border-radius:18px;box-shadow:0 18px 60px rgba(0,0,0,.20);overflow:hidden}
+
+    .modalHead{padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--border);background:#fbfbfd}
+    .modalTitle{font-size:13px;font-weight:820;color:#1d1d1f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .modalBody{padding:14px;display:flex;flex-direction:column;gap:12px;max-height:min(70vh, 620px);overflow:auto}
+    .modalFoot{padding:12px 14px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border);background:#fbfbfd}
+
+    .field{display:flex;flex-direction:column;gap:6px;min-width:0}
+    .label{font-size:11.5px;color:var(--sub)}
+    input[type="text"], input[type="date"], select, textarea{
+      width:100%;box-sizing:border-box;
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:8px 10px;
+      background:#fcfcff;
+      font-size:12.5px;
+      outline:none;
+      font-family:var(--font);
+    }
+    textarea{min-height:110px;resize:vertical;line-height:1.45}
+    input:focus, select:focus, textarea:focus{border-color:rgba(10,132,255,.4);box-shadow:0 0 0 4px rgba(10,132,255,.12)}
+
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+    .statusFilter{
+      display:flex;flex-wrap:wrap;gap:8px;
+      padding:10px;border:1px solid var(--border);border-radius:12px;background:#fcfcff
+    }
+    .chk{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#1d1d1f;padding:3px 6px;border-radius:10px;background:#fff;border:1px solid var(--border);user-select:none}
+    .chk input{transform:translateY(1px)}
+
+    .toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#1d1d1f;color:#fff;font-size:12px;padding:10px 12px;border-radius:12px;box-shadow:0 16px 38px rgba(0,0,0,.22);display:none;z-index:2000;max-width:min(520px, 92vw)}
+
+    .dangerBtn{background:rgba(255,59,48,.10);color:#8b1a12;border:1px solid rgba(255,59,48,.22)}
+    .dangerBtn:hover{background:rgba(255,59,48,.14)}
+
+    .hint{font-size:11.5px;color:var(--sub);line-height:1.35}
+
+    input[type="file"]{
+      position:absolute;
+      left:-9999px;
+      width:1px;
+      height:1px;
+      opacity:0;
+    }
+
+    /* Column widths (avoid horizontal scroll) */
+    .col-status{width:120px}
+    .col-artist{width:140px}
+    .col-title{width:190px}
+    .col-venue{width:130px}
+    .col-presale{width:95px}
+    .col-company{width:140px}
+    .col-person{width:100px}
+    .col-memo{width:70px}
+    .col-del{width:140px}
+    /* Main content card must be a flex column to allow inner (table) scrolling */
+    .mainCard{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+
+    /* Station theme (color only) */
+    body.station-802{--blue:#0a84ff;--blueSoft:rgba(10,132,255,.12)}
+    body.station-cocolo{--blue:#ff9f0a;--blueSoft:rgba(255,159,10,.16)}
+
+    /* Title row with station switch */
+    .titleRow{display:flex;align-items:center;gap:12px;min-width:0;flex-wrap:wrap}
+    .titleText{font-size:18px;font-weight:760;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+    .stationToggle{display:inline-flex;gap:8px;align-items:center}
+    .stationBtn{
+      border:1px solid var(--border);
+      background:#fff;
+      color:#1d1d1f;
+      border-radius:12px;
+      padding:8px 14px;
+      font-size:13px;
+      font-weight:860;
+      cursor:pointer;
+      user-select:none;
+      box-shadow:var(--shadow2);
+      transition:transform .06s ease, box-shadow .12s ease, background .12s ease;
+    }
+    .stationBtn:active{transform:translateY(1px)}
+    .stationBtn.active{background:var(--blue);color:#fff;border-color:rgba(10,132,255,.25);box-shadow:0 12px 24px rgba(0,0,0,.12)}
+
+    /* Table scrolling (Safari friendliness) */
+    .tableWrap{-webkit-overflow-scrolling:touch}
+
+    /* Date alerts */
+    .dateAlertRed{background:rgba(255,59,48,.10)}
+    .dateAlertYellow{background:rgba(255,204,0,.16)}
+
+    /* Status popover (inline picker) */
+    .statusPopover{
+      position:fixed;
+      z-index:1600;
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius:14px;
+      box-shadow:0 18px 60px rgba(0,0,0,.18);
+      padding:10px;
+      width:260px;
+      box-sizing:border-box;
+    }
+    .statusPopover .popTitle{font-size:12px;font-weight:820;color:#1d1d1f;margin-bottom:8px}
+    .statusPopover .popGrid{display:flex;flex-wrap:wrap;gap:8px}
+    .statusPopover .popBtn{flex:1 1 120px;min-width:120px;height:40px;justify-content:center}
+
+    /* Column widths */
+    .col-date{width:95px}
+
+  
+    .btnMini{padding:6px 10px;border-radius:12px;min-width:38px}
+
+    .btnPillSmall{
+      padding:6px 10px;
+      border-radius:10px;
+      font-size:12px;
+      min-height:32px;
+      line-height:1;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-width:0;
+    }
+
+    /* Print to PDF */
+    #printArea{display:none}
+    @media print{
+      @page{margin:8mm}
+
+      html,body{margin:0;padding:0;background:#fff}
+      /* Hide entire app to avoid blank pages; show only printArea */
+      body > *{display:none !important}
+      #printArea{display:block !important}
+
+      #printArea{
+        position:static;
+        width:100%;
+        margin:0;
+        padding:0;
+        box-sizing:border-box;
+        overflow:visible;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      /* Table */
+      .printTitleRow{display:flex;justify-content:space-between;align-items:flex-end;margin:0 0 10px}
+      .printTitle{font-size:18px;font-weight:900;color:#111}
+      .printMeta{font-size:11px;color:#555}
+
+      .printTable{width:100%;border-collapse:collapse;table-layout:fixed}
+      .printTable th,.printTable td{
+        border:1px solid rgba(0,0,0,0.22);
+        padding:6px 8px;
+        vertical-align:top;
+        white-space:normal;
+        word-break:break-word;
+        font-size:12px;
+      }
+      .printTable th{background:#f2f2f2;font-weight:800}
+
+      /* Prevent row splits where possible (browser may still split very tall rows) */
+      .printTable tr{break-inside:avoid;page-break-inside:avoid}
+      .printTitleRow{break-inside:avoid;page-break-inside:avoid}
+
+      /* Column widths */
+      .printTable .col-status{width:110px}
+      .printTable .col-date{width:85px}
+      .printTable .col-artist{width:130px}
+      .printTable .col-title{width:200px}
+      .printTable .col-venue{width:130px}
+      .printTable .col-presale{width:90px}
+      .printTable .col-company{width:140px}
+      .printTable .col-person{width:95px}
+      .printTable .col-memo{width:auto}
+
+      /* Badge: fit within cell in print */
+      .printTable .badgeBtn{
+        display:block;
+        width:100%;
+        min-width:0;
+        padding:6px 8px;
+        font-size:12px;
+        line-height:1.1;
+        box-sizing:border-box;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+      }
+    }
+
+    .quickSearch{width:100%;max-width:720px;border:1px solid var(--border);border-radius:999px;padding:9px 12px;font-size:13px;background:#fff;box-shadow:0 1px 0 rgba(0,0,0,.04)}
+    body.station-802 .quickSearch{width:100%;max-width:720px;border:1px solid var(--border);border-radius:999px;padding:9px 12px;font-size:13px;background:#fff;box-shadow:0 1px 0 rgba(0,0,0,.04)}
+    body.station-cocolo .quickSearch{width:100%;max-width:720px;border:1px solid var(--border);border-radius:999px;padding:9px 12px;font-size:13px;background:#fff;box-shadow:0 1px 0 rgba(0,0,0,.04)}
+    .quickSearch:focus{
+      border-color: rgba(0,0,0,.35);
+      background:#fff;
+    }
+    .hoverTip{
+      position:fixed;z-index:9999;
+      max-width:min(420px, 80vw);
+      padding:10px 12px;border-radius:12px;
+      background:rgba(20,20,28,0.92);
+      color:#fff;font-size:12.5px;line-height:1.35;
+      box-shadow:0 10px 30px rgba(0,0,0,0.35);
+      white-space:pre-wrap;
+      pointer-events:none;
+    }
+    .datePicker{
+      position:fixed;z-index:9998;
+      width:290px;
+      background:#fff;border:1px solid var(--border);
+      border-radius:16px;
+      box-shadow:0 18px 40px rgba(0,0,0,0.18);
+      padding:10px;
+    }
+    .dpHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+    .dpHead .mLabel{font-weight:700;font-size:13px}
+    .dpNav{display:flex;gap:6px}
+    .dpBtn{
+      border:1px solid var(--border);
+      background:#f6f6fb;
+      border-radius:12px;
+      padding:6px 10px;
+      cursor:pointer;
+      font-weight:700;
+      line-height:1;
+    }
+    .dpGrid{display:grid;grid-template-columns:repeat(7, 1fr);gap:4px}
+    .dpDow{font-size:11px;color:var(--sub);text-align:center;padding:4px 0}
+    .dpDay{
+      border:1px solid transparent;
+      background:#fff;
+      border-radius:12px;
+      padding:8px 0;
+      cursor:pointer;
+      font-size:12.5px;
+    }
+    .dpDay:hover{background:#f3f3ff;border-color:#e6e6ff}
+    .dpDay.isDim{opacity:.35}
+    .dpDay.isSel{background:#111;color:#fff}
+
+
+    mark.hl{
+      background: rgba(255, 230, 120, .75);
+      padding:0 2px;
+      border-radius:4px;
+    }
+</style>
+</head>
+
+<body>
+<div class="app">
+
+  <div class="card topbar">
+    <div class="brand">
+      <div class="titleRow">
+        <div class="titleText">名義SPOT進捗チェッカー</div>
+        <div class="stationToggle" id="stationToggle" aria-label="局切り替え">
+          <button class="stationBtn" data-st="802" type="button">802</button>
+          <button class="stationBtn" data-st="COCOLO" type="button">COCOLO</button>
+        </div>
+      </div>
+      </div>
+
+    <div class="topActions">
+      <button id="undoBtn" class="btn btnGhost" disabled>Undo</button>
+      <button id="redoBtn" class="btn btnGhost" disabled>Redo</button>
+      <button id="exportBtn" class="btn btnSecondary">書き出し（コピー）</button>
+      <button id="saveBtn" class="btn btnPrimary">保存</button>
+      <span id="dirtyPill" class="pill" style="display:none;">未保存</span>
+    </div>
+  </div>
+
+  <div class="card mainCard">
+    <div class="dropStrip">
+      <div id="dropZone" class="dropZone" aria-label="Excelファイルをドロップ">
+        <div class="dzText">
+          <div class="dzTitle">ここに Excel をドロップ</div>
+          <div class="dzSub">または「ファイルを選択」</div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; flex-shrink:0;">
+          <label id="pickBtn" for="fileInput" class="btn btnSecondary" role="button" tabindex="0">ファイルを選択</label>
+        </div>
+      </div>
+
+      <div class="meta">
+        <span id="fileName" class="fileName">未選択</span>
+        <span id="statusLine" class="statusLine"><span class="spinner" id="spin"></span><span id="statusText">待機中</span></span>
+</div>
+
+      <div id="banner" class="banner"></div>
+
+      <input id="fileInput" type="file" accept=".xlsx,.xls" />
+    </div>
+
+    <div id="notices" class="notices"></div>
+
+    <div class="tabsRow">
+      <div class="seg" id="tabSeg">
+        <button data-tab="applied" class="active">申請あり <span class="pill" id="cntApplied">0</span></button>
+        <button data-tab="manual">申請なし <span class="pill" id="cntManual">0</span></button>
+        <button data-tab="nostatus">OAなし <span class="pill" id="cntNoStatus">0</span></button>
+        <button data-tab="delivered">搬入済み <span class="pill" id="cntDelivered">0</span></button>
+        <button data-tab="ended">公演終了 <span class="pill" id="cntEnded">0</span></button>
+      </div>
+
+      <div class="midTools">
+        <input id="quickSearch" class="quickSearch" type="text" placeholder="検索…"/>
+      </div>
+
+      <div class="rightTools">
+<span class="pill" id="viewCount">表示 0 件</span>
+        <button id="addManualBtn" class="btn btnSecondary" style="display:none;">申請なしを追加</button>
+        <button id="filterBtn" class="btn btnGhost">絞り込み</button>
+        <button id="sortBtn" class="btn btnGhost">並び替え</button>
+        <button id="sortDirToggleBtn" class="btn btnGhost btnMini" title="第1キーの昇順/降順を切り替え">↑</button>
+      </div>
+    </div>
+
+    <div class="tableCard">
+      <div class="tableWrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="col-status">制作状況</th>
+              <th class="col-date">公演日</th>
+              <th class="col-artist">アーティスト名</th>
+              <th class="col-title">イベントタイトル</th>
+              <th class="col-venue">会場</th>
+              <th class="col-presale">前売り日</th>
+              <th class="col-company">申込社</th>
+              <th class="col-person">担当者</th>
+              <th class="col-memo">メモ</th>
+              <th class="col-del" id="thDelete" style="display:none;">編集</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Modals -->
+<div class="modalBackdrop" id="modalBackdrop">
+  <div class="modal" id="modal">
+    <div class="modalHead">
+      <div class="modalTitle" id="modalTitle">編集</div>
+</div>
+    <div class="modalBody" id="modalBody"></div>
+    <div class="modalFoot" id="modalFoot"></div>
+  </div>
+</div>
+
+
+<!-- Station Switch Dialog -->
+<div class="modalBackdrop" id="stationSwitchBackdrop" style="display:none">
+  <div class="modalShell" role="dialog" aria-modal="true" aria-labelledby="stationSwitchTitle" style="max-width:520px">
+    <div class="modalHead" style="padding:16px 18px 10px 18px">
+      <div class="modalTitle" id="stationSwitchTitle">未保存の変更があります</div>
+    </div>
+    <div class="modalBody" style="padding:14px 18px 16px 18px">
+      <div class="muted" style="line-height:1.6">
+        ステーションを切り替える前に、変更内容を保存しますか？
+      </div>
+    </div>
+    <div class="modalFoot" style="padding:12px 18px 18px 18px;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn btnGhost" id="stationSwitchCancelBtn">キャンセル</button>
+      <button class="btn btnGhost" id="stationSwitchNoSaveBtn">保存せず切り替え</button>
+      <button class="btn btnPrimary" id="stationSwitchSaveBtn">保存して切り替え</button>
+    </div>
+  </div>
+</div>
+
+
+
+<div class="toast" id="toast"></div>
+
+<div id="memoHoverTip" class="hoverTip" style="display:none;"></div>
+<div id="datePicker" class="datePicker" style="display:none;"></div>
+
+<div id="statusPopover" class="statusPopover" style="display:none;"></div>
+
+<script>
+
+  // ====== Helpers ======
+  const $ = (id) => document.getElementById(id);
+  const nowLocal = () => new Date();
+
+  // ====== Station switch 3-choice dialog ======
+  const stationSwitchBackdrop = () => $("stationSwitchBackdrop");
+  let _stationSwitchResolver = null;
+
+  function openStationSwitchDialog(){
+    return new Promise((resolve)=>{
+      _stationSwitchResolver = resolve;
+      const bd = stationSwitchBackdrop();
+      if (!bd) return resolve("cancel");
+      bd.style.display = "flex";
+      // focus primary
+      setTimeout(()=>{$("stationSwitchSaveBtn")?.focus?.();}, 0);
+    });
+  }
+
+  function closeStationSwitchDialog(choice){
+    const bd = stationSwitchBackdrop();
+    if (bd) bd.style.display = "none";
+    if (_stationSwitchResolver){
+      const r = _stationSwitchResolver;
+      _stationSwitchResolver = null;
+      r(choice);
+    }
+  }
+
+  // bind dialog buttons once
+  window.addEventListener("DOMContentLoaded", ()=>{
+    $("stationSwitchCancelBtn")?.addEventListener("click", ()=>closeStationSwitchDialog("cancel"));
+    $("stationSwitchNoSaveBtn")?.addEventListener("click", ()=>closeStationSwitchDialog("nosave"));
+    $("stationSwitchSaveBtn")?.addEventListener("click", ()=>closeStationSwitchDialog("save"));
+    $("stationSwitchBackdrop")?.addEventListener("click", (e)=>{
+      if (e.target && e.target.id === "stationSwitchBackdrop"){
+        closeStationSwitchDialog("cancel");
+      }
+    });
+  });
+
+
+  // ====== Diagnostics (no-ops safe) ======
+  const DIAG = {
+    js:false,
+    listeners:false,
+    xlsx:false,
+    idb:false,
+    env:(location && location.protocol) ? location.protocol.replace(':','') : 'unknown',
+    lastEvent:'',
+    lastError:''
+  };
+
+  function diagBanner(kind, msg){
+    try{
+      const b = document.getElementById('banner');
+      if (!b) return;
+      b.className = 'banner ' + (kind === 'ok' ? 'ok' : 'ng');
+      b.textContent = msg;
+      b.style.display = 'block';
+    }catch{}
+  }
+
+  function diagUpdate(){
+    const el = document.getElementById('diagPill');
+    if (!el) return;
+    const parts = [
+      `JS:${DIAG.js ? 'OK' : 'NG'}`,
+      `EV:${DIAG.listeners ? 'OK' : 'NG'}`,
+      `XLSX:${DIAG.xlsx ? 'OK' : 'NG'}`,
+      `IDB:${DIAG.idb ? 'OK' : 'NG'}`,
+      `ENV:${DIAG.env}`
+    ];
+    if (DIAG.lastEvent) parts.push(`LAST:${DIAG.lastEvent}`);
+    el.textContent = '診断 ' + parts.join(' / ');
+    el.classList.toggle('diagOk', !DIAG.lastError);
+    el.classList.toggle('diagNg', !!DIAG.lastError);
+    el.title = DIAG.lastError ? DIAG.lastError : 'エラーなし';
+  }
+
+  function diagNoteEvent(name){
+    DIAG.lastEvent = name;
+    diagUpdate();
+  }
+
+  function diagNoteError(err){
+    const msg = (err && (err.message || err.reason || err)) ? String(err.message || err.reason || err) : 'unknown error';
+    DIAG.lastError = msg;
+    diagUpdate();
+    diagBanner('ng', `JSエラー: ${msg}`);
+  }
+
+  window.addEventListener('error', (e)=>{
+    try{ diagNoteError(e && e.error ? e.error : (e && e.message ? e.message : e)); }catch{}
+  });
+  window.addEventListener('unhandledrejection', (e)=>{
+    try{ diagNoteError(e && e.reason ? e.reason : e); }catch{}
+  });
+
+  DIAG.js = true;
+  DIAG.xlsx = !!window.XLSX;
+  DIAG.idb = ('indexedDB' in window) && !!window.indexedDB;
+  diagUpdate();
+
+
+  function fpx(n){ return Math.round(n) + "px"; }
+
+  function toast(msg){
+    const t = $("toast");
+    t.textContent = msg;
+    t.style.display = "block";
+    clearTimeout(toast._t);
+    toast._t = setTimeout(()=>{ t.style.display="none"; }, 1400);
+  }
+
+
+  // ===== Hover tip (memo preview) =====
+  function showHoverTip(text, anchorEl){
+    const el = $("memoHoverTip");
+    el.textContent = text;
+    el.style.display = "block";
+
+    // アンカー（メモボタン）基準で固定表示（マウス追従しない）
+    const pad = 10;
+    const a = anchorEl && anchorEl.getBoundingClientRect ? anchorEl.getBoundingClientRect() : {left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0};
+
+    // まずはボタン右側に出す → 入らなければ左側へ
+    let left = a.right + pad;
+    let top  = a.top;
+
+    // 一度表示してサイズを計測
+    const r = el.getBoundingClientRect();
+
+    if (left + r.width > window.innerWidth - 8) left = a.left - r.width - pad;
+    if (top + r.height > window.innerHeight - 8) top = window.innerHeight - r.height - 8;
+    if (top < 8) top = 8;
+
+    el.style.left = Math.max(8, left) + "px";
+    el.style.top  = Math.max(8, top)  + "px";
+  }
+
+  function hideHoverTip(){
+    const el = $("memoHoverTip");
+    el.style.display = "none";
+  }
+
+
+  // ===== Date picker (left/right month nav) =====
+  let dpTarget = null;
+  let dpYear = null;
+  let dpMonth = null; // 0-11
+
+  const DOW = ["日","月","火","水","木","金","土"];
+
+  function parseYMD(s){
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || "");
+    if (!m) return null;
+    const y = +m[1], mo = +m[2]-1, d = +m[3];
+    const dt = new Date(y, mo, d);
+    if (dt.getFullYear()!==y || dt.getMonth()!==mo || dt.getDate()!==d) return null;
+    return dt;
+  }
+
+  function fmtYMD(dt){
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth()+1).padStart(2,"0");
+    const d = String(dt.getDate()).padStart(2,"0");
+    return `${y}-${m}-${d}`;
+  }
+
+  function openDatePicker(inputEl){
+    dpTarget = inputEl;
+    const el = $("datePicker");
+    const base = parseYMD(inputEl.value) || new Date();
+    dpYear = base.getFullYear();
+    dpMonth = base.getMonth();
+    renderDatePicker();
+    const r = inputEl.getBoundingClientRect();
+    el.style.display = "block";
+    // 入力の下に出す。はみ出すなら左へ寄せる
+    let left = r.left;
+    let top  = r.bottom + 8;
+    const w = 290;
+    if (left + w > window.innerWidth - 8) left = Math.max(8, window.innerWidth - w - 8);
+    el.style.left = left + "px";
+    el.style.top  = top + "px";
+  }
+
+  function closeDatePicker(){
+    const el = $("datePicker");
+    el.style.display = "none";
+    dpTarget = null;
+  }
+
+  function renderDatePicker(){
+    const el = $("datePicker");
+    el.innerHTML = "";
+
+    const head = document.createElement("div");
+    head.className = "dpHead";
+
+    const nav = document.createElement("div");
+    nav.className = "dpNav";
+
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.className = "dpBtn";
+    prev.textContent = "←";
+    prev.addEventListener("click", (e)=>{
+      e.preventDefault();
+      dpMonth--;
+      if (dpMonth < 0){ dpMonth = 11; dpYear--; }
+      renderDatePicker();
+    });
+
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "dpBtn";
+    next.textContent = "→";
+    next.addEventListener("click", (e)=>{
+      e.preventDefault();
+      dpMonth++;
+      if (dpMonth > 11){ dpMonth = 0; dpYear++; }
+      renderDatePicker();
+    });
+
+    nav.appendChild(prev);
+    nav.appendChild(next);
+
+    const label = document.createElement("div");
+    label.className = "mLabel";
+    label.textContent = `${dpYear}年 ${dpMonth+1}月`;
+
+    head.appendChild(nav);
+    head.appendChild(label);
+    el.appendChild(head);
+
+    const grid = document.createElement("div");
+    grid.className = "dpGrid";
+
+    for (const d of DOW){
+      const dow = document.createElement("div");
+      dow.className = "dpDow";
+      dow.textContent = d;
+      grid.appendChild(dow);
+    }
+
+    const first = new Date(dpYear, dpMonth, 1);
+    const startDow = first.getDay();
+    const daysInMonth = new Date(dpYear, dpMonth+1, 0).getDate();
+    const prevDays = new Date(dpYear, dpMonth, 0).getDate();
+
+    const sel = dpTarget ? parseYMD(dpTarget.value) : null;
+    const selStr = sel ? fmtYMD(sel) : null;
+
+    // 6 weeks grid
+    let dayNum = 1;
+    let nextNum = 1;
+    for (let i=0; i<42; i++){
+      const cell = document.createElement("button");
+      cell.type = "button";
+      cell.className = "dpDay";
+      let y = dpYear, m = dpMonth, d = 1;
+      if (i < startDow){
+        // prev month
+        cell.classList.add("isDim");
+        d = prevDays - (startDow - 1 - i);
+        m = dpMonth - 1;
+        if (m < 0){ m = 11; y--; }
+      }else if (dayNum <= daysInMonth){
+        d = dayNum++;
+      }else{
+        // next month
+        cell.classList.add("isDim");
+        d = nextNum++;
+        m = dpMonth + 1;
+        if (m > 11){ m = 0; y++; }
+      }
+      const dt = new Date(y, m, d);
+      const s = fmtYMD(dt);
+      cell.textContent = String(d);
+      if (selStr && s === selStr){
+        cell.classList.add("isSel");
+      }
+      cell.addEventListener("click", (e)=>{
+        e.preventDefault();
+        if (dpTarget){
+          dpTarget.value = s;
+        }
+        closeDatePicker();
+      });
+      grid.appendChild(cell);
+    }
+
+    el.appendChild(grid);
+  }
+
+  document.addEventListener("click", (e)=>{
+    const dp = $("datePicker");
+    if (dp.style.display === "none") return;
+    if (dp.contains(e.target)) return;
+    if (dpTarget && dpTarget === e.target) return;
+    closeDatePicker();
+  }, true);
+
+  window.addEventListener("resize", ()=>{ if ($("datePicker").style.display !== "none") closeDatePicker(); });
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[c]));
+  }
+
+  function normalizeText(v){
+    let s = String(v ?? "");
+    s = s.replace(/\u3000/g, " ");
+    s = s.replace(/\uFFFD/g, "");
+    s = s.replace(/[\u0000-\u001F\u007F]/g, "");
+    s = s.replace(/\s+/g, " ").trim();
+    return s;
+  }
+
+  function stripKabushiki(company){
+    const s = normalizeText(company);
+    const cleaned = s
+      .replace(/株式会社/g, "")
+      .replace(/[（(]株[）)]/g, "")
+      .replace(/㈱/g, "")
+      .replace(/有限会社/g, "")
+      .replace(/[（(]有[）)]/g, "")
+      .replace(/㈲/g, "")
+      .replace(/^[?・]+/g, "")
+      .trim();
+    return normalizeText(cleaned);
+  }
+
+  function ymdKey(y,m,d){ return y*10000 + m*100 + d; }
+  function dateToKey(dt){
+    if (!(dt instanceof Date) || isNaN(dt.valueOf())) return null;
+    return ymdKey(dt.getFullYear(), dt.getMonth()+1, dt.getDate());
+  }
+  function keyToYMD(k){
+    const y = Math.floor(k/10000);
+    const m = Math.floor((k%10000)/100);
+    const d = k%100;
+    return {y,m,d};
+  }
+
+  function extractYmdListFromString(text){
+    const s = String(text ?? "");
+    const re = /(\d{4})\/(\d{1,2})\/(\d{1,2})/g;
+    const out = [];
+    let m;
+    while((m = re.exec(s)) !== null){
+      out.push({ y:Number(m[1]), m:Number(m[2]), d:Number(m[3]) });
+    }
+    return out;
+  }
+
+  function parseDateCell(raw){
+    if (raw instanceof Date && !isNaN(raw.valueOf())){
+      const k = dateToKey(raw);
+      const mm = raw.getMonth()+1;
+      const dd = raw.getDate();
+      return { startKey:k, endKey:k, display:`${mm}/${dd}` };
+    }
+    if (typeof raw === "number" && window.XLSX){
+      const dc = XLSX.SSF.parse_date_code(raw);
+      if (dc && dc.y && dc.m && dc.d){
+        const k = ymdKey(dc.y, dc.m, dc.d);
+        return { startKey:k, endKey:k, display:`${dc.m}/${dc.d}` };
+      }
+    }
+
+    const txt = normalizeText(raw);
+    if (!txt) return { startKey:null, endKey:null, display:"" };
+
+    const hasRange = txt.includes("〜") || txt.includes("～");
+    const list = extractYmdListFromString(txt);
+
+    if (hasRange && list.length >= 2){
+      const a = list[0], b = list[1];
+      const sk = ymdKey(a.y,a.m,a.d);
+      const ek = ymdKey(b.y,b.m,b.d);
+      return { startKey: sk, endKey: ek, display: `${a.m}/${a.d}〜${b.m}/${b.d}` };
+    }
+
+    if (list.length >= 1){
+      const keys = list.map(x => ymdKey(x.y,x.m,x.d)).sort((a,b)=>a-b);
+      const sk = keys[0];
+      const ek = keys[keys.length-1];
+      // display month-grouped
+      const byMonth = new Map();
+      for (const k of keys){
+        const {y,m,d} = keyToYMD(k);
+        const km = `${y}-${m}`;
+        if (!byMonth.has(km)) byMonth.set(km, new Set());
+        byMonth.get(km).add(d);
+      }
+      const months = Array.from(byMonth.keys()).sort((a,b)=>{
+        const [ya,ma] = a.split("-").map(Number);
+        const [yb,mb] = b.split("-").map(Number);
+        return ymdKey(ya,ma,1)-ymdKey(yb,mb,1);
+      });
+      const parts = [];
+      for (const km of months){
+        const [,mStr] = km.split("-");
+        const m = Number(mStr);
+        const days = Array.from(byMonth.get(km)).sort((x,y)=>x-y);
+        const head = `${m}/${days[0]}`;
+        const rest = days.slice(1).join(",");
+        parts.push(rest ? `${head},${rest}` : head);
+      }
+      return { startKey: sk, endKey: ek, display: parts.join(",") };
+    }
+
+    return { startKey:null, endKey:null, display: txt };
+  }
+
+  function normalizeStatus(raw){
+    const v = normalizeText(raw);
+    if (!v) return "";
+    // 「0」は廃止 → 未制作へ統一
+    if (v === "0") return "未制作";
+    if (v === "6") return "不要";
+    if (v === "不要") return "不要";
+    if (v.includes("確認済")) return "確認済";
+    if (v === "確認中") return "確認中";
+    if (v === "制作中") return "制作中";
+    if (v === "未制作") return "未制作";
+    // 表記ゆれ吸収：「搬入済」「搬入済み」→ 搬入済
+    if (v === "搬入済" || v === "搬入済み" || v.includes("搬入済")) return "搬入済";
+    return v;
+  }
+
+  // ロジック上の表記ゆれを吸収
+  function statusForLogic(st){
+    return normalizeStatus(st);
+  }
+function daysUntilKey(k){
+    if (k == null) return null;
+    const {y,m,d} = keyToYMD(k);
+    const target = new Date(y, m-1, d);
+    const today = nowLocal();
+    const t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const diff = (target.getTime() - t0.getTime()) / 86400000;
+    return Math.floor(diff);
+  }
+
+  function dateAlertLevel(rec){
+    const st = statusForLogic(rec.status);
+    const watch = (st === '未制作' || st === '制作中' || st === '確認中');
+    if (!watch) return null;
+    if (rec.startKey == null) return null;
+
+    // 月単位で判定（例: 1月なら2月=赤、3月=黄）
+    const {y,m} = keyToYMD(rec.startKey);
+    const now = nowLocal();
+    const cur = now.getFullYear()*12 + (now.getMonth()+1);
+    const tgt = y*12 + m;
+    const diff = tgt - cur;
+    if (diff < 0) return null;
+    if (diff <= 1) return 'red';
+    if (diff === 2) return 'yellow';
+    return null;
+  }
+
+
+  const STATUS_RANK = {
+    // 表記ゆれ対策：旧データ「搬入済み」も同ランク扱い
+    "搬入済": 5,
+    "搬入済み": 5,
+    "不要": 6,
+    "確認済": 4,
+    "確認済み": 4,
+    "確認中": 3,
+    "制作中": 2,
+    "未制作": 1,
+    "0": 1, // 互換：旧データを未制作相当として扱う（表示は未制作へ移行）
+    "": -1
+  };
+
+  const STATUS_DROPDOWN = ["未制作","制作中","確認中","確認済","搬入済","不要"]; // 0は選択肢に出さない
+
+  function statusBadgeClass(st){
+    const s = normalizeStatus(st);
+    if (s === "搬入済") return "badgeBtn b-green";
+    if (s === "確認済") return "badgeBtn b-blue";
+    if (s === "確認済み") return "badgeBtn b-blue";
+    if (s === "確認中") return "badgeBtn b-orange";
+    if (s === "制作中") return "badgeBtn b-purple";
+    if (s === "未制作") return "badgeBtn b-red";
+    if (s === "不要") return "badgeBtn b-dark";
+    if (!s) return "badgeBtn b-gray";
+    return "badgeBtn b-gray";
+  }
+
+  function clone(obj){
+    return JSON.parse(JSON.stringify(obj));
+  }
+
+  // ====== Persistence ======
+  const DB_NAME = "meigiSpotManagerDB";
+  const DB_VER = 1;
+  const STORE = "state";
+
+  function openDB(){
+    return new Promise((resolve, reject)=>{
+      const req = indexedDB.open(DB_NAME, DB_VER);
+      req.onupgradeneeded = ()=>{
+        const db = req.result;
+        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+      };
+      req.onsuccess = ()=> resolve(req.result);
+      req.onerror = ()=> reject(req.error);
+    });
+  }
+
+  async function loadSavedState(station){
+    const db = await openDB();
+    const key = 'app:' + String(station || '802');
+    return new Promise((resolve)=>{
+      const tx = db.transaction(STORE, 'readonly');
+      const st = tx.objectStore(STORE);
+      const r = st.get(key);
+      r.onsuccess = ()=> resolve(r.result || null);
+      r.onerror = ()=> resolve(null);
+    });
+  }
+
+  async function saveStateToDB(station, state){
+    const db = await openDB();
+    return new Promise((resolve,reject)=>{
+      const tx = db.transaction(STORE, "readwrite");
+      const st = tx.objectStore(STORE);
+      const key = 'app:' + String(station || '802');
+      const r = st.put(state, key);
+      r.onsuccess = ()=> resolve();
+      r.onerror = ()=> reject(r.error);
+    });
+  }
+
+  // ====== App State ======
+  let app = {
+    recordsById: {},
+    ui: {
+      tab: "applied",
+      filter: {
+        fromKey: null,
+        toKey: null,
+        keyword: "",
+        statusSet: new Set() // 0は含めない
+      },
+      sort: {
+        k1: "status",
+        d1: "asc",
+        k2: "date",
+        d2: "asc"
+      },
+      sortLock: null,
+      deferTabMoves: false,
+      lastRenderIds: []
+    }
+  };
+
+  // ====== Station (802 / COCOLO) ======
+  const STATIONS = ["802","COCOLO"];
+  let currentStation = (function(){
+    try{
+      const v = localStorage.getItem('meigi.station') || '802';
+      return STATIONS.includes(v) ? v : '802';
+    }catch{ return '802'; }
+  })();
+
+  // In-memory cache per station (unsaved state switching safety)
+  const stationCache = new Map();
+
+  function serializeAppState(){
+    return {
+      recordsById: app.recordsById,
+      ui: {
+        tab: app.ui.tab,
+        filter: {
+          fromKey: app.ui.filter.fromKey,
+          toKey: app.ui.filter.toKey,
+          keyword: app.ui.filter.keyword,
+          statusSet: Array.from(app.ui.filter.statusSet)
+        },
+        sort: app.ui.sort
+      }
+    };
+  }
+
+  function applyAppState(saved){
+    app.recordsById = saved.recordsById || {};
+    // 旧データ互換：ステータス表記ゆれを正規化
+    for (const id in app.recordsById){
+      const r = app.recordsById[id];
+      if (!r) continue;
+      r.status = normalizeStatus(r.status);
+    }
+    if (saved.ui?.tab) app.ui.tab = saved.ui.tab;
+    if (saved.ui?.filter){
+      app.ui.filter.fromKey = saved.ui.filter.fromKey ?? null;
+      app.ui.filter.toKey = saved.ui.filter.toKey ?? null;
+      app.ui.filter.keyword = saved.ui.filter.keyword ?? "";
+      app.ui.filter.statusSet = new Set(saved.ui.filter.statusSet || []);
+      // 旧表記ゆれ補正
+      if (app.ui.filter.statusSet.has("搬入済み")){ app.ui.filter.statusSet.delete("搬入済み"); app.ui.filter.statusSet.add("搬入済"); }
+      if (app.ui.filter.statusSet.has("0")){ app.ui.filter.statusSet.delete("0"); app.ui.filter.statusSet.add("未制作"); }
+      if (app.ui.filter.statusSet.has("6")){ app.ui.filter.statusSet.delete("6"); app.ui.filter.statusSet.add("不要"); }
+    } else {
+      app.ui.filter.fromKey = null;
+      app.ui.filter.toKey = null;
+      app.ui.filter.keyword = "";
+      app.ui.filter.statusSet = new Set();
+    }
+    if (saved.ui?.sort) app.ui.sort = saved.ui.sort;
+  }
+
+  function applyStationUI(){
+    try{ $("quickSearch").value = app.ui.filter.keyword || ""; }catch{}
+
+    document.body.classList.toggle('station-802', currentStation === '802');
+    document.body.classList.toggle('station-cocolo', currentStation === 'COCOLO');
+
+    const wrap = $('stationToggle');
+    if (wrap){
+      for (const b of wrap.querySelectorAll('button[data-st]')){
+        b.classList.toggle('active', b.dataset.st === currentStation);
+      }
+    }
+  }
+
+  async function loadStation(st){
+    // reset UI defaults
+    app.ui.tab = "applied";
+    app.ui.filter.fromKey = null;
+    app.ui.filter.toKey = null;
+    app.ui.filter.keyword = "";
+    app.ui.filter.statusSet = new Set();
+    app.ui.sort = { k1:"status", d1:"asc", k2:"date", d2:"asc" };
+
+    // try cache first
+    const cached = stationCache.get(st);
+    if (cached){
+      applyAppState(cached.saved);
+      undoStack.length = 0;
+      redoStack.length = 0;
+      undoStack.push(...(cached.undo || []));
+      redoStack.push(...(cached.redo || []));
+      markDirty(!!cached.dirty);
+      updateUndoRedoButtons();
+      syncUIFromState();
+      render();
+      return;
+    }
+
+    let saved = null;
+    try{
+      saved = await loadSavedState(st);
+      DIAG.idb = true;
+    }catch(e){
+      DIAG.idb = false;
+      diagNoteError(e);
+    }
+    diagUpdate();
+
+    if (saved && saved.recordsById){
+      applyAppState(saved);
+      markDirty(false);
+    } else {
+      app.recordsById = {};
+      markDirty(false);
+    }
+
+    undoStack.length = 0;
+    redoStack.length = 0;
+    updateUndoRedoButtons();
+    syncUIFromState();
+    render();
+  }
+
+  async function switchStation(next){
+    if (!STATIONS.includes(next) || next === currentStation) return;
+    if (dirty){
+      const choice = await openStationSwitchDialog();
+      if (choice === "cancel") return;
+      if (choice === "save"){
+        const ok = await saveNow({showToast:false});
+        if (!ok) return;
+      }
+      // choice === "nosave" -> continue
+    }
+
+
+    // cache current (including unsaved state)
+    stationCache.set(currentStation, {
+      saved: serializeAppState(),
+      dirty: dirty,
+      undo: clone(undoStack),
+      redo: clone(redoStack)
+    });
+
+    currentStation = next;
+    try{ localStorage.setItem('meigi.station', currentStation); }catch{}
+    applyStationUI();
+    closeStatusPopover();
+    await loadStation(currentStation);
+  }
+
+
+  let dirty = false;
+
+  // Undo/Redo
+  const undoStack = [];
+  const redoStack = [];
+  const MAX_UNDO = 10;
+
+  function markDirty(v=true){
+    dirty = v;
+    $("dirtyPill").style.display = dirty ? "inline-flex" : "none";
+  }
+
+  // 制作状況変更による「タブ移動」を一時的に止めた場合の解除（保存/並び替え適用で実行）
+  function flushDeferredMoves(){
+    // sortLock もここで解除（＝並び替えを再評価してよい）
+    app.ui.sortLock = null;
+
+    if (app.ui.deferTabMoves){
+      for (const r of Object.values(app.recordsById)){
+        if (r && r.__pinnedTab) delete r.__pinnedTab;
+      }
+      app.ui.deferTabMoves = false;
+    }
+  }
+
+
+  function updateUndoRedoButtons(){
+    $("undoBtn").disabled = undoStack.length === 0;
+    $("redoBtn").disabled = redoStack.length === 0;
+  }
+
+  function pushUndoSnapshot(){
+    undoStack.push(clone({
+      recordsById: app.recordsById,
+      ui: {
+        tab: app.ui.tab,
+        filter: {
+          fromKey: app.ui.filter.fromKey,
+          toKey: app.ui.filter.toKey,
+          keyword: app.ui.filter.keyword,
+          statusSet: Array.from(app.ui.filter.statusSet)
+        },
+        sort: app.ui.sort
+      }
+    }));
+    while(undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;
+    updateUndoRedoButtons();
+  }
+
+  function restoreSnapshot(snap){
+    app.recordsById = snap.recordsById || {};
+    app.ui.tab = snap.ui?.tab || "applied";
+    const f = snap.ui?.filter || {};
+    app.ui.filter.fromKey = f.fromKey ?? null;
+    app.ui.filter.toKey = f.toKey ?? null;
+    app.ui.filter.keyword = f.keyword ?? "";
+    app.ui.filter.statusSet = new Set(f.statusSet || []);
+    app.ui.sort = snap.ui?.sort || app.ui.sort;
+
+    syncUIFromState();
+    render();
+  }
+
+  function doUndo(){
+    if (undoStack.length === 0) return;
+    const cur = clone({
+      recordsById: app.recordsById,
+      ui: {
+        tab: app.ui.tab,
+        filter: {
+          fromKey: app.ui.filter.fromKey,
+          toKey: app.ui.filter.toKey,
+          keyword: app.ui.filter.keyword,
+          statusSet: Array.from(app.ui.filter.statusSet)
+        },
+        sort: app.ui.sort
+      }
+    });
+    redoStack.push(cur);
+    const prev = undoStack.pop();
+    updateUndoRedoButtons();
+    restoreSnapshot(prev);
+    markDirty(true);
+  }
+
+  function doRedo(){
+    if (redoStack.length === 0) return;
+    const cur = clone({
+      recordsById: app.recordsById,
+      ui: {
+        tab: app.ui.tab,
+        filter: {
+          fromKey: app.ui.filter.fromKey,
+          toKey: app.ui.filter.toKey,
+          keyword: app.ui.filter.keyword,
+          statusSet: Array.from(app.ui.filter.statusSet)
+        },
+        sort: app.ui.sort
+      }
+    });
+    undoStack.push(cur);
+    while(undoStack.length > MAX_UNDO) undoStack.shift();
+    const nxt = redoStack.pop();
+    updateUndoRedoButtons();
+    restoreSnapshot(nxt);
+    markDirty(true);
+  }
+
+  // ====== Classification ======
+  function todayKey(){
+    const d = nowLocal();
+    return ymdKey(d.getFullYear(), d.getMonth()+1, d.getDate());
+  }
+
+  function isEnded(rec){
+    if (rec.endedFromSheet) return true;
+    if (rec.endKey != null && rec.endKey < todayKey()) return true;
+    return false;
+  }
+
+  function classifyTab(rec){
+    // 申請なし（手入力）は常にこのタブに固定（搬入済/公演終了へ移動しない）
+    if (!rec.hasApplication) return 'manual';
+
+    if (isEnded(rec)) return 'ended';
+
+    const logical = statusForLogic(rec.status);
+    if (logical === '搬入済') return 'delivered';
+
+    // OAなし（旧:制作なし）: ステータス空欄 or 不要
+    if (!logical) return 'nostatus';
+    if (logical === '不要') return 'nostatus';
+
+    return 'applied';
+  }
+
+  // UI上でのタブ移動を「保存/並び替え適用」まで遅延するための実タブ
+  function effectiveTab(rec){
+    if (app.ui.deferTabMoves && rec && rec.__pinnedTab){
+      return rec.__pinnedTab;
+    }
+    return classifyTab(rec);
+  }
+
+  // ====== Filter & Sort ======
+  function recordSearchBlob(rec){
+    // Keyword search across multiple fields
+    const parts = [
+      rec.artist, rec.title, rec.venue, rec.company, rec.person, rec.memo,
+      rec.presaleText, rec.dateText
+    ].map(x => (x || "").toString());
+    return parts.join(" ").toLowerCase();
+  }
+
+  function passesFilters(rec){
+    const f = app.ui.filter;
+
+    // Date range overlap (uses start/end keys)
+    if (f.fromKey != null || f.toKey != null){
+      if (rec.startKey == null || rec.endKey == null) return false;
+      const from = f.fromKey ?? -Infinity;
+      const to = f.toKey ?? Infinity;
+      if (rec.startKey > to) return false;
+      if (rec.endKey < from) return false;
+    }
+
+    // Keyword
+    if (f.keyword && f.keyword.trim()){
+      const q = f.keyword.trim().toLowerCase();
+      if (!recordSearchBlob(rec).includes(q)) return false;
+    }
+
+    // Status filter (0 is treated as 未制作)
+    if (f.statusSet.size > 0){
+      const logical = statusForLogic(rec.status);
+      if (!f.statusSet.has(logical)) return false;
+    }
+
+    return true;
+  }
+
+  const SORT_KEYS = [
+    { key:"status", label:"制作状況" },
+    { key:"date", label:"公演日" },
+    { key:"venue", label:"会場" },
+    { key:"company", label:"申込社" },
+    { key:"person", label:"担当者" },
+    { key:"artist", label:"アーティスト" },
+    { key:"title", label:"タイトル" },
+    { key:"presale", label:"前売日" }
+  ];
+
+  function statusSortValue(st){
+    // 0は未制作として並べる
+    const s = statusForLogic(st);
+    const order = ["確認済","確認中","制作中","未制作","不要",""]; // 搬入済みは別タブ
+    const idx = order.indexOf(s);
+    return idx === -1 ? 999 : idx;
+  }
+
+  function compareByKey(a,b,key){
+    if (key === "status"){
+      return statusSortValue(a.status) - statusSortValue(b.status);
+    }
+    if (key === "date"){
+      const ak = a.startKey ?? 99999999;
+      const bk = b.startKey ?? 99999999;
+      return ak - bk;
+    }
+    if (key === "presale"){
+      const ak = a.presaleKey ?? 99999999;
+      const bk = b.presaleKey ?? 99999999;
+      return ak - bk;
+    }
+    const va = (a[key] ?? "").toString();
+    const vb = (b[key] ?? "").toString();
+    return va.localeCompare(vb, "ja");
+  }
+
+  function applySort(list){
+    const {k1,d1,k2,d2} = app.ui.sort;
+    const dir1 = d1 === "asc" ? 1 : -1;
+    const dir2 = d2 === "asc" ? 1 : -1;
+    return list.sort((a,b)=>{
+      const c1 = compareByKey(a,b,k1) * dir1;
+      if (c1 !== 0) return c1;
+      const c2 = compareByKey(a,b,k2) * dir2;
+      if (c2 !== 0) return c2;
+      return (a.id||"").localeCompare((b.id||""), "ja");
+    });
+  }
+
+  // ====== Excel Import ======
+  function setLoading(on, text){
+    $("statusLine").classList.toggle("loading", !!on);
+    $("statusText").textContent = text || (on ? "処理中…" : "待機中");
+  }
+
+  function showBanner(kind, msg){
+    const b = $("banner");
+    b.className = "banner " + (kind === "ok" ? "ok" : "ng");
+    b.textContent = msg;
+    b.style.display = "block";
+  }
+
+  function hideBanner(){
+    const b = $("banner");
+    b.style.display = "none";
+    b.textContent = "";
+  }
+
+  let _toastTimer = null;
+  function showToast(kind, msg, ms=1600){
+    try{
+      showBanner(kind, msg);
+      if (_toastTimer) clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(()=>{ hideBanner(); }, ms);
+    }catch{}
+  }
+
+  function showNotices(lines){
+    // ユーザー要望: D&Dゾーン下の注意欄は不要（常に非表示）
+    const n = $('notices');
+    if (n){ n.style.display = 'none'; n.innerHTML = ''; }
+  }
+
+  function getSheetByNameOrFirst(wb, preferred){
+    if (wb.SheetNames.includes(preferred)) return preferred;
+    return wb.SheetNames[0];
+  }
+
+  function readRows(wb, sheetName){
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval:"" });
+    return rows;
+  }
+
+  function parseRecordFromRow(row){
+    const id = normalizeText(row["ID"]);
+    if (!id) return null;
+
+    const company = stripKabushiki(row["申込社"]);
+    const person = normalizeText(row["担当者"]);
+    const artist = normalizeText(row["アーティスト名"]);
+    const title = normalizeText(row["イベントタイトル"]);
+    const venue = normalizeText(row["会場名"]);
+    const memo = normalizeText(row["メモ"]);
+
+    const dateParsed = parseDateCell(row["公演日"]);
+    const presaleParsed = parseDateCell(row["前売日"]);
+
+    const status = normalizeStatus(row["制作状況"]);
+
+    return {
+      id,
+      hasApplication: true,
+      company,
+      person,
+      artist,
+      title,
+      venue,
+      dateText: dateParsed.display,
+      startKey: dateParsed.startKey,
+      endKey: dateParsed.endKey,
+      presaleText: presaleParsed.display,
+      presaleKey: presaleParsed.startKey,
+      status,
+      memo,
+      endedFromSheet: false
+    };
+  }
+
+  function mergeRecords(existing, incoming, notices){
+    let updated = false;
+
+    function overwriteField(key){
+      const nv = incoming[key];
+      if (nv != null && String(nv).trim() !== ""){
+        if ((existing[key] ?? "") !== nv){
+          existing[key] = nv;
+          updated = true;
+        }
+      }
+    }
+
+    if (!existing.hasApplication && incoming.hasApplication){
+      existing.hasApplication = true;
+      updated = true;
+    }
+
+    overwriteField("company");
+    overwriteField("person");
+    overwriteField("artist");
+    overwriteField("title");
+    overwriteField("venue");
+
+    overwriteField("dateText");
+    if (incoming.startKey != null && incoming.endKey != null){
+      if (existing.startKey !== incoming.startKey || existing.endKey !== incoming.endKey){
+        existing.startKey = incoming.startKey;
+        existing.endKey = incoming.endKey;
+        updated = true;
+      }
+    }
+
+    overwriteField("presaleText");
+    if (incoming.presaleKey != null && existing.presaleKey !== incoming.presaleKey){
+      existing.presaleKey = incoming.presaleKey;
+      updated = true;
+    }
+
+    overwriteField("memo");
+
+    if (incoming.endedFromSheet && !existing.endedFromSheet){
+      existing.endedFromSheet = true;
+      updated = true;
+    }
+
+    // status special (weak overwrite forbidden)
+    const old = existing.status ?? "";
+    const neu = incoming.status ?? "";
+
+    if (neu !== ""){
+      if (old === ""){
+        existing.status = neu;
+        updated = true;
+      } else {
+        const oldRank = STATUS_RANK[old] ?? -1;
+        const newRank = STATUS_RANK[neu] ?? -1;
+        if (newRank > oldRank){
+          existing.status = neu;
+          updated = true;
+        } else {
+          notices._rejectedStatus = (notices._rejectedStatus || 0) + 1;
+        }
+      }
+    }
+
+    return updated;
+  }
+
+  async function importExcelFile(file){
+    diagNoteEvent("import-start");
+    DIAG.xlsx = !!window.XLSX;
+    diagUpdate();
+
+    if (!window.XLSX){
+      showBanner("ng","Excel解析ライブラリの読み込みに失敗しました（通信環境をご確認ください）。");
+      return;
+    }
+
+    setLoading(true, "読み込み中…");
+    hideBanner();
+    showNotices([]);
+    $("fileName").textContent = file.name;
+
+    try{
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type:"array", cellDates:true });
+
+      const notices = [];
+      let newCount=0, updCount=0, statusUpd=0, statusRejected=0;
+
+      const mainSheet = wb.SheetNames.includes("製作状況") ? "製作状況" : getSheetByNameOrFirst(wb,"製作状況");
+      if (mainSheet !== "製作状況"){
+        notices.push(`※注意: 「製作状況」シートが無かったため「${mainSheet}」を読み取りました。`);
+      }
+
+      const rowsMain = readRows(wb, mainSheet);
+
+      let endedSheetName = null;
+      if (wb.SheetNames.includes("公演終了")) endedSheetName = "公演終了";
+
+      const endedIds = new Set();
+      if (endedSheetName){
+        const rowsEnded = readRows(wb, endedSheetName);
+        for (const row of rowsEnded){
+          const id = normalizeText(row["ID"]);
+          if (id) endedIds.add(id);
+        }
+      }
+
+      pushUndoSnapshot();
+
+      for (const row of rowsMain){
+        const incoming = parseRecordFromRow(row);
+        if (!incoming) continue;
+        if (endedIds.has(incoming.id)) incoming.endedFromSheet = true;
+
+        const id = incoming.id;
+        const existing = app.recordsById[id];
+        if (!existing){
+          app.recordsById[id] = incoming;
+          newCount++;
+        } else {
+          const beforeStatus = existing.status;
+          const localNotices = {};
+          const updated = mergeRecords(existing, incoming, localNotices);
+          if (updated) updCount++;
+          if (existing.status !== beforeStatus && incoming.status !== "") statusUpd++;
+          if (localNotices._rejectedStatus) statusRejected += localNotices._rejectedStatus;
+        }
+      }
+
+      // mark endedFromSheet for existing ids in ended sheet
+      if (endedIds.size > 0){
+        for (const id of endedIds){
+          if (app.recordsById[id] && !app.recordsById[id].endedFromSheet){
+            app.recordsById[id].endedFromSheet = true;
+            updCount++;
+          }
+        }
+      }
+
+      const msg = `取り込み完了：新規 ${newCount} / 更新 ${updCount}`;
+      showBanner("ok", msg);
+      setLoading(false, "完了");
+      markDirty(true);
+      // 注意欄は表示しない（要望により廃止）
+
+      render();
+    } catch(e){
+      console.error(e);
+      showBanner("ng", (e && e.message) ? e.message : String(e));
+      setLoading(false, "失敗");
+    }
+  }
+
+  // ====== Manual records ======
+  function newManualRecord(){
+    const id = "manual-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+    return {
+      id,
+      hasApplication:false,
+      company:"",
+      person:"",
+      artist:"",
+      title:"",
+      venue:"",
+      dateText:"",
+      startKey:null,
+      endKey:null,
+      presaleText:"",
+      presaleKey:null,
+      status:"",
+      memo:"",
+      endedFromSheet:false
+    };
+  }
+
+  // ====== Modal system ======
+  function openModal(title, bodyEl, footEl){
+    $("modalTitle").textContent = title;
+    const body = $("modalBody");
+    const foot = $("modalFoot");
+    body.innerHTML = "";
+    foot.innerHTML = "";
+    body.appendChild(bodyEl);
+    foot.appendChild(footEl);
+    $("modalBackdrop").style.display = "flex";
+  }
+
+  function closeModal(){
+    $("modalBackdrop").style.display = "none";
+  }
+
+    const __closeBtn = $("modalCloseBtn");
+  if (__closeBtn) __closeBtn.addEventListener("click", closeModal);
+  $("modalBackdrop").addEventListener("click", (e)=>{
+    if (e.target === $("modalBackdrop")) closeModal();
+  });
+
+  // ====== UI: Memo ======
+  function openMemoModal(recId){
+    const rec = app.recordsById[recId];
+    if (!rec) return;
+
+    const body = document.createElement("div");
+    const ta = document.createElement("textarea");
+    ta.value = rec.memo || "";
+    body.appendChild(ta);
+
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = "メモは個人管理用です。";
+    body.appendChild(hint);
+
+    const foot = document.createElement("div");
+    const cancel = document.createElement("button");
+    cancel.className = "btn btnGhost";
+    cancel.textContent = "キャンセル";
+    cancel.addEventListener("click", closeModal);
+
+    const save = document.createElement("button");
+    save.className = "btn btnPrimary";
+    save.textContent = "保存";
+    save.addEventListener("click", ()=>{
+      pushUndoSnapshot();
+      rec.memo = ta.value.trim();
+      markDirty(true);
+      closeModal();
+      render();
+    });
+
+    foot.appendChild(cancel);
+    foot.appendChild(save);
+
+    openModal("メモ", body, foot);
+  }
+
+  // ====== UI: Manual edit ======
+  function openManualEditModal(recId){
+    const rec = app.recordsById[recId];
+    if (!rec) return;
+
+    const body = document.createElement("div");
+    body.className = "grid2";
+
+    const fields = [
+      ["申込社", "company"],
+      ["担当者", "person"],
+      ["アーティスト名", "artist"],
+      ["イベントタイトル", "title"],
+      ["会場", "venue"],
+      ["前売り日（文字列）", "presaleText"],
+      ["公演日（文字列）", "dateText"],
+    ];
+
+    const inputs = new Map();
+    for (const [label, key] of fields){
+      const wrap = document.createElement("div");
+      wrap.className = "field";
+      const l = document.createElement("div");
+      l.className = "label";
+      l.textContent = label;
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.value = rec[key] || "";
+      wrap.appendChild(l);
+      wrap.appendChild(inp);
+      body.appendChild(wrap);
+      inputs.set(key, inp);
+    }
+
+    const memoWrap = document.createElement("div");
+    memoWrap.className = "field";
+    memoWrap.style.gridColumn = "1 / -1";
+    const ml = document.createElement("div");
+    ml.className = "label";
+    ml.textContent = "メモ";
+    const ta = document.createElement("textarea");
+    ta.value = rec.memo || "";
+    memoWrap.appendChild(ml);
+    memoWrap.appendChild(ta);
+    body.appendChild(memoWrap);
+
+    const foot = document.createElement("div");
+
+    const del = document.createElement("button");
+    del.className = "btn dangerBtn";
+    del.textContent = "削除";
+    del.addEventListener("click", ()=>{
+      const ok = confirm("このイベントを削除します。よろしいですか？");
+      if (!ok) return;
+      pushUndoSnapshot();
+      delete app.recordsById[rec.id];
+      markDirty(true);
+      closeModal();
+      render();
+    });
+
+    const cancel = document.createElement("button");
+    cancel.className = "btn btnGhost";
+    cancel.textContent = "閉じる";
+    cancel.addEventListener("click", closeModal);
+
+    const save = document.createElement("button");
+    save.className = "btn btnPrimary";
+    save.textContent = "保存";
+    save.addEventListener("click", ()=>{
+      pushUndoSnapshot();
+      rec.company = stripKabushiki(inputs.get("company").value);
+      rec.person = normalizeText(inputs.get("person").value);
+      rec.artist = normalizeText(inputs.get("artist").value);
+      rec.title = normalizeText(inputs.get("title").value);
+      rec.venue = normalizeText(inputs.get("venue").value);
+
+      const dParsed = parseDateCell(inputs.get("dateText").value);
+      rec.dateText = dParsed.display || normalizeText(inputs.get("dateText").value);
+      rec.startKey = dParsed.startKey;
+      rec.endKey = dParsed.endKey;
+
+      const pParsed = parseDateCell(inputs.get("presaleText").value);
+      rec.presaleText = pParsed.display || normalizeText(inputs.get("presaleText").value);
+      rec.presaleKey = pParsed.startKey;
+
+      rec.memo = ta.value.trim();
+
+      markDirty(true);
+      closeModal();
+      render();
+    });
+
+    foot.appendChild(del);
+    foot.appendChild(cancel);
+    foot.appendChild(save);
+
+    openModal("申請なし 編集", body, foot);
+  }
+
+  
+  // ====== UI: Status picker (badge click) ======
+  let _popClose = null;
+
+  function closeStatusPopover(){
+    const pop = $("statusPopover");
+    if (!pop) return;
+    pop.style.display = "none";
+    pop.innerHTML = "";
+    if (_popClose){
+      document.removeEventListener('click', _popClose, true);
+      window.removeEventListener('scroll', closeStatusPopover, true);
+      window.removeEventListener('resize', closeStatusPopover, true);
+      _popClose = null;
+    }
+  }
+
+  function openStatusPicker(recId, anchorEl){
+    const rec = app.recordsById[recId];
+    if (!rec) return;
+
+    const pop = $("statusPopover");
+    if (!pop) return;
+
+    pop.innerHTML = "";
+    const title = document.createElement('div');
+    title.className = 'popTitle';
+    title.textContent = '制作状況を選択';
+    pop.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'popGrid';
+
+    for (const s of STATUS_DROPDOWN){
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btnSecondary popBtn';
+      btn.textContent = s;
+      btn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+
+        const beforeTab = effectiveTab(rec);
+        // 変更後に即ソートで位置が飛ばないよう、現表示順を一時ロック
+        app.ui.sortLock = { tab: app.ui.tab, ids: (app.ui.lastRenderIds || []).slice() };
+
+        pushUndoSnapshot();
+        rec.status = normalizeStatus(s);
+        markDirty(true);
+
+        // バッジ変更でのタブ移動は「保存」または「並び替え適用」まで遅延
+        rec.__pinnedTab = beforeTab;
+        app.ui.deferTabMoves = true;
+
+        closeStatusPopover();
+render();
+      });
+      grid.appendChild(btn);
+    }
+
+    pop.appendChild(grid);
+
+    // Position near anchor
+    const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : {left: 0, bottom: 0, top:0, width:0};
+    const pad = 10;
+    pop.style.display = 'block';
+
+    // measure
+    const w = pop.offsetWidth || 260;
+    const h = pop.offsetHeight || 180;
+
+    let left = rect.left;
+    let top = rect.bottom + 8;
+
+    // keep within viewport
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    if (left + w + pad > vw) left = Math.max(pad, vw - w - pad);
+    if (top + h + pad > vh) top = Math.max(pad, rect.top - h - 8);
+
+    pop.style.left = fpx(left);
+    pop.style.top = fpx(top);
+
+    // close on outside click
+    _popClose = (ev)=>{
+      try{
+        if (ev.target === pop || pop.contains(ev.target)) return;
+      }catch{}
+      closeStatusPopover();
+    };
+    document.addEventListener('click', _popClose, true);
+    window.addEventListener('scroll', closeStatusPopover, true);
+    window.addEventListener('resize', closeStatusPopover, true);
+  }
+
+  // ====== UI: Filter modal ======
+  function openFilterModal(){
+    const body = document.createElement("div");
+
+    const grid = document.createElement("div");
+    grid.className = "grid2";
+
+    const fromWrap = document.createElement("div");
+    fromWrap.className = "field";
+    fromWrap.innerHTML = `<div class="label">公演日（From）</div>`;
+    const fromInp = document.createElement("input");
+    fromInp.type = "text";
+    fromInp.readOnly = true;
+    fromInp.placeholder = "YYYY-MM-DD";
+    fromInp.value = app.ui.filter.fromKey ? toDateInput(app.ui.filter.fromKey) : "";
+    fromInp.addEventListener("click", ()=> openDatePicker(fromInp));
+    fromWrap.appendChild(fromInp);
+
+    const toWrap = document.createElement("div");
+    toWrap.className = "field";
+    toWrap.innerHTML = `<div class="label">公演日（To）</div>`;
+    const toInp = document.createElement("input");
+    toInp.type = "text";
+    toInp.readOnly = true;
+    toInp.placeholder = "YYYY-MM-DD";
+    toInp.value = app.ui.filter.toKey ? toDateInput(app.ui.filter.toKey) : "";
+    toInp.addEventListener("click", ()=> openDatePicker(toInp));
+    toWrap.appendChild(toInp);
+
+    grid.appendChild(fromWrap);
+    grid.appendChild(toWrap);
+
+
+    body.appendChild(grid);
+
+    const stLabel = document.createElement("div");
+    stLabel.className = "label";
+    stLabel.textContent = "制作状況";
+    body.appendChild(stLabel);
+
+    const stBox = document.createElement("div");
+    stBox.className = "statusFilter";
+
+    const statusOptions = ["確認済","確認中","制作中","未制作","搬入済","不要"]; // 0無し
+    const checks = new Map();
+    for (const s of statusOptions){
+      const lb = document.createElement("label");
+      lb.className = "chk";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = app.ui.filter.statusSet.has(s);
+      checks.set(s, cb);
+      lb.appendChild(cb);
+      lb.appendChild(document.createTextNode(s));
+      stBox.appendChild(lb);
+    }
+    body.appendChild(stBox);
+
+    const foot = document.createElement("div");
+
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "btn btnGhost";
+    clearBtn.textContent = "クリア";
+    clearBtn.addEventListener("click", ()=>{
+      fromInp.value = "";
+      toInp.value = "";
+      try{ $("quickSearch").value = ""; }catch{}
+      app.ui.filter.keyword = "";
+      for (const cb of checks.values()) cb.checked = false;
+    });
+
+    const cancel = document.createElement("button");
+    cancel.className = "btn btnGhost";
+    cancel.textContent = "閉じる";
+    cancel.addEventListener("click", closeModal);
+
+    const apply = document.createElement("button");
+    apply.className = "btn btnPrimary";
+    apply.textContent = "適用";
+    apply.addEventListener("click", ()=>{
+      // keyword is controlled by the top search box
+      const fd = fromInp.value;
+      const td = toInp.value;
+      app.ui.filter.fromKey = fd ? ymdKey(...fd.split("-").map(Number)) : null;
+      app.ui.filter.toKey = td ? ymdKey(...td.split("-").map(Number)) : null;
+
+      const set = new Set();
+      for (const [s, cb] of checks.entries()){
+        if (cb.checked) set.add(s);
+      }
+      app.ui.filter.statusSet = set;
+
+      closeModal();
+      render();
+    });
+
+    foot.appendChild(clearBtn);
+    foot.appendChild(cancel);
+    foot.appendChild(apply);
+
+    openModal("絞り込み", body, foot);
+  }
+
+  // ====== UI: Sort modal ======
+  function openSortModal(){
+    const body = document.createElement("div");
+    const grid = document.createElement("div");
+    grid.className = "grid2";
+
+    function makeSelect(label, options, value){
+      const wrap = document.createElement("div");
+      wrap.className = "field";
+      const l = document.createElement("div");
+      l.className = "label";
+      l.textContent = label;
+      const sel = document.createElement("select");
+      for (const o of options){
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.textContent = o.label;
+        if (o.value === value) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      wrap.appendChild(l);
+      wrap.appendChild(sel);
+      return {wrap, sel};
+    }
+
+    const keyOpts = SORT_KEYS.map(k=>({value:k.key,label:k.label}));
+    const dirOpts = [
+      {value:"asc", label:"昇順"},
+      {value:"desc", label:"降順"}
+    ];
+
+    const s1k = makeSelect("第1キー", keyOpts, app.ui.sort.k1);
+    const s1d = makeSelect("順", dirOpts, app.ui.sort.d1);
+    const s2k = makeSelect("第2キー", keyOpts, app.ui.sort.k2);
+    const s2d = makeSelect("順", dirOpts, app.ui.sort.d2);
+
+    grid.appendChild(s1k.wrap);
+    grid.appendChild(s1d.wrap);
+    grid.appendChild(s2k.wrap);
+    grid.appendChild(s2d.wrap);
+
+    body.appendChild(grid);
+
+    const foot = document.createElement("div");
+    const cancel = document.createElement("button");
+    cancel.className = "btn btnGhost";
+    cancel.textContent = "閉じる";
+    cancel.addEventListener("click", closeModal);
+
+    const apply = document.createElement("button");
+    apply.className = "btn btnPrimary";
+    apply.textContent = "適用";
+    apply.addEventListener("click", ()=>{
+      app.ui.sort.k1 = s1k.sel.value;
+      app.ui.sort.d1 = s1d.sel.value;
+      app.ui.sort.k2 = s2k.sel.value;
+      app.ui.sort.d2 = s2d.sel.value;
+      flushDeferredMoves();
+      closeModal();
+      render();
+    });
+
+    foot.appendChild(cancel);
+    foot.appendChild(apply);
+
+    openModal("並び替え", body, foot);
+  }
+
+  // ====== UI: Export modal ======
+  function openExportModal(){
+    const view = getViewRecords();
+
+        const cols = [
+      { key:"status", label:"制作状況" },
+      { key:"dateText", label:"公演日" },
+      { key:"artist", label:"アーティスト名" },
+      { key:"title", label:"イベントタイトル" },
+      { key:"venue", label:"会場" },
+      { key:"presaleText", label:"前売り日" },
+      { key:"company", label:"申込社" },
+      { key:"person", label:"担当者" }
+    ];
+
+    const defaultOn = new Set(["dateText","artist","company"]);
+
+    const body = document.createElement("div");
+
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = "現在のタブ・絞り込み・並び順を反映してコピーします（TSV形式）。";
+    body.appendChild(hint);
+
+    const colList = document.createElement("div");
+    colList.className = "statusFilter";
+
+    const checks = new Map();
+    for (const c of cols){
+      const lb = document.createElement("label");
+      lb.className = "chk";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = defaultOn.has(c.key);
+      checks.set(c.key, cb);
+      lb.appendChild(cb);
+      lb.appendChild(document.createTextNode(c.label));
+      colList.appendChild(lb);
+    }
+
+    body.appendChild(colList);
+
+    const preview = document.createElement("div");
+    preview.className = "hint";
+    preview.textContent = `対象：${view.length}件`;
+    body.appendChild(preview);
+
+    const foot = document.createElement("div");
+    const cancel = document.createElement("button");
+    cancel.className = "btn btnGhost";
+    cancel.textContent = "閉じる";
+    cancel.addEventListener("click", closeModal);
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "btn btnPrimary";
+    copyBtn.textContent = "コピー";
+    copyBtn.addEventListener("click", async ()=>{
+      const chosen = cols.filter(c => checks.get(c.key).checked);
+      if (chosen.length === 0){
+        alert("コピーする項目を選択してください。");
+        return;
+      }
+
+      const lines = [];
+      const BUL = "　・"; // 全角スペース＋中黒点
+      const ZS = "　"; // 全角スペース（空白用）
+
+      function normCell(v){
+        const s0 = (v ?? "").toString();
+        const s = s0.replaceAll("\r", " ").replaceAll("\n", " ").trim();
+        return s ? s : ZS;
+      }
+
+      for (const r of view){
+        let line = BUL;
+        let prevKey = null;
+        for (const c of chosen){
+          let v = normCell(r[c.key]);
+          if (c.key === "company"){
+            v = "（" + v + "）";
+          }
+          // 公演日→アーティスト名 の間だけ全角スペースで連結（例に合わせる）
+          const sep = (prevKey === "dateText" && c.key === "artist") ? ZS : "	";
+          if (prevKey === null){
+            line += v;
+          }else{
+            line += sep + v;
+          }
+          prevKey = c.key;
+        }
+        lines.push(line);
+      }
+
+      const text = lines.join("\n");
+      try{
+        await navigator.clipboard.writeText(text);
+        closeModal();
+        toast("コピーしました");
+      }catch{
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        closeModal();
+        toast("コピーしました");
+      }
+    });
+
+    
+    const pdfBtn = document.createElement("button");
+    pdfBtn.className = "btn btnGhost";
+    pdfBtn.textContent = "PDFで保存";
+    pdfBtn.addEventListener("click", ()=>{
+      // Build printable view from current screen state (tab/filter/sort already applied)
+      preparePrintArea();
+      closeModal();
+      // Small delay so DOM updates settle before print dialog opens
+      setTimeout(()=>{ window.print(); }, 80);
+    });
+
+foot.appendChild(cancel);
+    foot.appendChild(copyBtn);
+    foot.appendChild(pdfBtn);
+
+    openModal("書き出し（コピー）", body, foot);
+  }
+
+  function preparePrintArea(){
+    const pa = $("printArea");
+    if (!pa) return;
+
+    // Clear
+    pa.innerHTML = "";
+
+    const wrap = document.createElement("div");
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "printTitleRow";
+
+    const title = document.createElement("div");
+    title.className = "printTitle";
+    title.textContent = "名義SPOT進捗チェッカー";
+
+    const meta = document.createElement("div");
+    meta.className = "printMeta";
+    const stationLabel = (app.station === "802") ? "802" : "COCOLO";
+    const tabLabelMap = {
+      applied: "申請あり",
+      manual: "申請なし",
+      nostatus: "OAなし",
+      delivered: "搬入済み",
+      ended: "公演終了"
+    };
+    const tabLabel = tabLabelMap[app.ui.tab] || app.ui.tab;
+    const now = new Date();
+    meta.textContent = `${stationLabel} / ${tabLabel} / ${now.toLocaleString("ja-JP")}`;
+
+    titleRow.appendChild(title);
+    titleRow.appendChild(meta);
+    wrap.appendChild(titleRow);
+
+    const table = document.createElement("table");
+    table.className = "printTable";
+
+    const thead = document.createElement("thead");
+    const trh = document.createElement("tr");
+
+    const cols = [
+      { key:"status", label:"制作状況", cls:"col-status" },
+      { key:"dateText", label:"公演日", cls:"col-date" },
+      { key:"artist", label:"アーティスト名", cls:"col-artist" },
+      { key:"title", label:"イベントタイトル", cls:"col-title" },
+      { key:"venue", label:"会場", cls:"col-venue" },
+      { key:"presaleText", label:"前売り日", cls:"col-presale" },
+      { key:"company", label:"申込社", cls:"col-company" },
+      { key:"person", label:"担当者", cls:"col-person" }
+    ];
+
+    for (const c of cols){
+      const th = document.createElement("th");
+      th.textContent = c.label;
+      if (c.cls) th.className = c.cls;
+      trh.appendChild(th);
+    }
+    thead.appendChild(trh);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    const view = getViewRecords();
+
+    for (const rec of view){
+      const tr = document.createElement("tr");
+
+      for (const c of cols){
+        const td = document.createElement("td");
+        if (c.cls) td.className = c.cls;
+
+        if (c.key === "status"){
+          const s = normalizeStatus(rec.status);
+          const badge = document.createElement("span");
+          badge.className = statusBadgeClass(s);
+          badge.textContent = s ? s : "(未設定)";
+          td.appendChild(badge);
+        } else if (c.key === "dateText"){
+          td.textContent = rec.dateText || "";
+          const lvl = dateAlertLevel(rec);
+          if (lvl === "red") td.classList.add("dateAlertRed");
+          if (lvl === "yellow") td.classList.add("dateAlertYellow");
+        } else {
+          td.textContent = (rec[c.key] ?? "").toString();
+        }
+
+        tr.appendChild(td);
+      }
+
+      tbody.appendChild(tr);
+    }
+
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+
+    pa.appendChild(wrap);
+    pa.style.display = "block";
+
+    // Clean up after print
+    window.onafterprint = ()=>{
+      const pa2 = $("printArea");
+      if (pa2){
+        pa2.innerHTML = "";
+        pa2.style.display = "none";
+      }
+      window.onafterprint = null;
+    };
+  }
+
+  // ====== UI sync ======
+  function toDateInput(k){
+    const {y,m,d} = keyToYMD(k);
+    const mm = String(m).padStart(2,"0");
+    const dd = String(d).padStart(2,"0");
+    return `${y}-${mm}-${dd}`;
+  }
+
+  function syncUIFromState(){
+    // tabs and buttons handled in render
+  }
+
+  // ====== Rendering ======
+  function getAllRecords(){
+    return Object.values(app.recordsById);
+  }
+
+  function computeCounts(){
+    const all = getAllRecords();
+    let applied=0, manual=0, nostatus=0, delivered=0, ended=0;
+    for (const r of all){
+      const t = effectiveTab(r);
+      if (t==="applied") applied++;
+      else if (t==="manual") manual++;
+      else if (t==="nostatus") nostatus++;
+      else if (t==="delivered") delivered++;
+      else if (t==="ended") ended++;
+    }
+    $("cntApplied").textContent = applied;
+    $("cntManual").textContent = manual;
+    $("cntNoStatus").textContent = nostatus;
+    $("cntDelivered").textContent = delivered;
+    $("cntEnded").textContent = ended;
+  }
+
+  function getViewRecords(){
+    const tab = app.ui.tab;
+    let list = getAllRecords().filter(r => effectiveTab(r) === tab);
+    list = list.filter(passesFilters);
+
+    // 制作状況変更などで「並び替えが即時反映」して見失うのを防ぐため、
+    // 直近の表示順（sortLock）を維持する。解除は「並び替え適用」または「保存」などで行う。
+    const lock = app.ui.sortLock;
+    if (lock && lock.tab === tab && Array.isArray(lock.ids) && lock.ids.length){
+      const map = new Map(list.map(r => [r.id, r]));
+      const ordered = [];
+      for (const id of lock.ids){
+        const r = map.get(id);
+        if (r){
+          ordered.push(r);
+          map.delete(id);
+        }
+      }
+      // 新規に増えた分などは最後に追加（並びは安定しやすいよう一旦ソートして足す）
+      const rest = Array.from(map.values());
+      if (rest.length){
+        applySort(rest);
+        ordered.push(...rest);
+      }
+      return ordered;
+    }
+
+    list = applySort(list);
+    return list;
+  }
+
+  function updateSortDirToggle(){
+    const b = $("sortDirToggleBtn");
+    if (!b) return;
+    const isAsc = (app.ui.sort.d1 === "asc");
+    b.textContent = isAsc ? "↑" : "↓";
+    b.title = "第1キーの" + (isAsc ? "昇順" : "降順") + "（クリックで切替）";
+  }
+
+  function render(){
+    computeCounts();
+
+    updateSortDirToggle();
+
+    for (const btn of $("tabSeg").querySelectorAll("button[data-tab]")){
+      btn.classList.toggle("active", btn.dataset.tab === app.ui.tab);
+    }
+
+    const showDelete = app.ui.tab === "manual";
+    $("thDelete").style.display = showDelete ? "" : "none";
+    $("addManualBtn").style.display = (app.ui.tab === "manual") ? "inline-flex" : "none";
+
+    const tbody = $("tbody");
+    tbody.innerHTML = "";
+
+    const view = getViewRecords();
+    app.ui.lastRenderIds = view.map(r=>r.id);
+    $("viewCount").textContent = `表示 ${view.length} 件`;
+
+    for (const rec of view){
+      const tr = document.createElement("tr");
+
+      // 制作状況
+      const tdSt = document.createElement("td");
+      // 申請なし（手入力）でも制作状況を編集できる（ただしタブ自動移動はしない：classifyTab が manual 固定）
+      const badge = document.createElement("button");
+      badge.type = "button";
+      badge.className = statusBadgeClass(rec.status);
+      badge.title = "クリックして変更";
+      badge.textContent = rec.status ? normalizeStatus(rec.status) : "（未設定）";
+      badge.addEventListener("click", (e)=>{
+        e.stopPropagation(); // 行クリック（申請なし編集）を止める
+        openStatusPicker(rec.id, badge);
+      });
+      tdSt.appendChild(badge);
+      tr.appendChild(tdSt);
+
+      // 公演日
+      const tdDate = tdWrap(rec.dateText || "", true);
+      const lvl = dateAlertLevel(rec);
+      if (lvl === "red") tdDate.classList.add("dateAlertRed");
+      if (lvl === "yellow") tdDate.classList.add("dateAlertYellow");
+      tr.appendChild(tdDate);
+
+      // アーティスト名
+      tr.appendChild(tdWrap(rec.artist || ""));
+      // イベントタイトル
+      tr.appendChild(tdWrap(rec.title || ""));
+      // 会場
+      tr.appendChild(tdWrap(rec.venue || ""));
+      // 前売り日
+      tr.appendChild(tdWrap(rec.presaleText || "", true));
+      // 申込社
+      tr.appendChild(tdWrap(rec.company || ""));
+      // 担当者
+      tr.appendChild(tdWrap(rec.person || ""));
+
+      // メモ
+      const tdMemo = document.createElement("td");
+const memoBtn = document.createElement("button");
+      memoBtn.className = "btn btnGhost btnPillSmall";
+      memoBtn.textContent = rec.memo ? "編集" : "追加";
+      memoBtn.title = rec.memo ? rec.memo : "";
+      memoBtn.addEventListener("click", (e)=>{
+        e.stopPropagation();
+        openMemoModal(rec.id);
+      });
+      memoBtn.addEventListener("mouseenter", (e)=>{
+        if (!rec.memo) return;
+        showHoverTip(rec.memo, e.currentTarget);
+      });
+      memoBtn.addEventListener("mouseleave", ()=>{ hideHoverTip(); });
+      tdMemo.appendChild(memoBtn);
+      tr.appendChild(tdMemo);
+
+      // 削除（申請なしのみ）
+      const tdDel = document.createElement("td");
+      tdDel.style.display = showDelete ? "" : "none";
+      if (showDelete){
+        tdDel.style.whiteSpace = "normal";
+        const actions = document.createElement("div");
+        actions.className = "actionBtns";
+
+        const editBtn = document.createElement("button");
+        editBtn.className = "btn btnGhost btnPillSmall";
+        editBtn.textContent = "編集";
+        editBtn.addEventListener("click", (e)=>{
+          e.stopPropagation();
+          openManualEditModal(rec.id);
+        });
+
+        const delBtn = document.createElement("button");
+        delBtn.className = "btn dangerBtn btnPillSmall";
+        delBtn.textContent = "削除";
+        delBtn.addEventListener("click", (e)=>{
+          e.stopPropagation();
+          const ok = confirm("このイベントを削除します。よろしいですか？");
+          if (!ok) return;
+          pushUndoSnapshot();
+          delete app.recordsById[rec.id];
+          markDirty(true);
+          render();
+        });
+
+        actions.appendChild(editBtn);
+        actions.appendChild(delBtn);
+        tdDel.appendChild(actions);
+      }
+      tr.appendChild(tdDel);
+tbody.appendChild(tr);
+    }
+  }
+
+  function tdWrap(text, muted=false){
+    const td = document.createElement("td");
+    if (muted) td.classList.add("muted");
+
+    const q = (app?.ui?.filter?.keyword || "").trim();
+    if (!q){
+      td.textContent = text;
+      return td;
+    }
+
+    // Highlight (case-insensitive) without regex
+    const s = String(text ?? "");
+    const sLow = s.toLowerCase();
+    const qLow = q.toLowerCase();
+
+    let i = 0;
+    const frag = document.createDocumentFragment();
+    while (true){
+      const j = sLow.indexOf(qLow, i);
+      if (j === -1){
+        frag.appendChild(document.createTextNode(s.slice(i)));
+        break;
+      }
+      if (j > i) frag.appendChild(document.createTextNode(s.slice(i, j)));
+      const m = document.createElement("mark");
+      m.className = "hl";
+      m.textContent = s.slice(j, j + q.length);
+      frag.appendChild(m);
+      i = j + q.length;
+      if (i >= s.length) break;
+    }
+    td.appendChild(frag);
+    return td;
+  }
+
+
+  
+  // Quick search (replaces keyword box in filter modal)
+  let _qsTimer = null;
+  $("quickSearch").addEventListener("input", (e)=>{
+    const v = e.target.value || "";
+    if (_qsTimer) clearTimeout(_qsTimer);
+    _qsTimer = setTimeout(()=>{
+      app.ui.filter.keyword = v;
+      render();
+    }, 120);
+  });
+// ====== Events ======
+  $("undoBtn").addEventListener("click", doUndo);
+  $("redoBtn").addEventListener("click", doRedo);
+
+  
+  async function saveNow(options){
+    const opts = options || {};
+    const showToast = (opts.showToast !== false);
+    try{
+      // Unlock deferred tab moves / sort and immediately re-render (so rows move only on save)
+      flushDeferredMoves();
+      render();
+
+      const state = {
+        recordsById: app.recordsById,
+        ui: {
+          tab: app.ui.tab,
+          filter: {
+            fromKey: app.ui.filter.fromKey,
+            toKey: app.ui.filter.toKey,
+            keyword: app.ui.filter.keyword,
+            statusSet: Array.from(app.ui.filter.statusSet)
+          },
+          sort: app.ui.sort
+        },
+        savedAt: Date.now()
+      };
+      await saveStateToDB(currentStation, state);
+      markDirty(false);
+      if (showToast) toast("保存しました");
+      return true;
+    }catch(e){
+      console.error(e);
+      alert("保存に失敗しました。");
+      return false;
+    }
+  }
+
+  $("saveBtn").addEventListener("click", async ()=>{ await saveNow({showToast:true}); });
+
+  $("exportBtn").addEventListener("click", openExportModal);
+
+  $("filterBtn").addEventListener("click", openFilterModal);
+  $("sortBtn").addEventListener("click", openSortModal);
+  const sortDirBtn = $("sortDirToggleBtn");
+  if (sortDirBtn){
+    sortDirBtn.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      app.ui.sort.d1 = (app.ui.sort.d1 === "asc") ? "desc" : "asc";
+      flushDeferredMoves();
+      render();
+    });
+  }
+
+  // Tabs
+  $("tabSeg").addEventListener("click", (e)=>{
+    const btn = e.target.closest("button[data-tab]");
+    if (!btn) return;
+    const nextTab = btn.dataset.tab;
+    if (nextTab === app.ui.tab) return;
+
+    // タブ切り替えでは confirm を出さない（ステーション切替のみ）
+    if (dirty){
+      toast("未保存の変更があります（保存をおすすめします）");
+    }
+
+    app.ui.tab = nextTab;
+    render();
+  });
+
+  // Add manual
+  $("addManualBtn").addEventListener("click", ()=>{
+    pushUndoSnapshot();
+    const rec = newManualRecord();
+    app.recordsById[rec.id] = rec;
+    markDirty(true);
+    render();
+    openManualEditModal(rec.id);
+  });
+
+  // File input / D&D
+      // File picker label diagnostics + keyboard
+  const pick = $("pickBtn");
+  if (pick){
+    pick.addEventListener('click', ()=>{ diagNoteEvent('pick-click'); });
+    pick.addEventListener('keydown', (e)=>{
+      if (e.key === 'Enter' || e.key === ' '){
+        e.preventDefault();
+        try{ $("fileInput").click(); }catch{}
+      }
+    });
+  }
+
+$("fileInput").addEventListener("change", async (e)=>{
+    const f = e.target.files && e.target.files[0];
+    if (f) await importExcelFile(f);
+    e.target.value = "";
+  });
+
+    // Prevent browser from navigating away on file drop (and record diagnostics)
+  window.addEventListener('dragover', (e)=>{
+    try{ e.preventDefault(); }catch{}
+  }, {passive:false});
+  window.addEventListener('drop', (e)=>{
+    try{ e.preventDefault(); }catch{}
+  }, {passive:false});
+
+const dz = $("dropZone");
+  dz.addEventListener("dragover", (e)=>{ e.preventDefault(); dz.classList.add("drag"); diagNoteEvent("dragover"); });
+  dz.addEventListener("dragleave", ()=>{ dz.classList.remove("drag"); diagNoteEvent("dragleave"); });
+  dz.addEventListener("drop", async (e)=>{
+    diagNoteEvent("drop");
+    e.preventDefault();
+    dz.classList.remove("drag");
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) await importExcelFile(f);
+  });
+
+  DIAG.listeners = true;
+  diagUpdate();
+
+  // Dirty close warning
+  window.addEventListener("beforeunload", (e)=>{
+    if (!dirty) return;
+    e.preventDefault();
+    e.returnValue = "";
+  });
+
+    // ====== Boot ======
+  (async function boot(){
+    applyStationUI();
+
+    // station toggle click
+    const stWrap = $('stationToggle');
+    if (stWrap){
+      stWrap.addEventListener('click', async (e)=>{
+        const b = e.target.closest('button[data-st]');
+        if (!b) return;
+        await switchStation(b.dataset.st);
+      });
+    }
+
+    // load current station
+    await loadStation(currentStation);
+
+    setLoading(false, "待機中");
+  })();
+</script>
+
+<div id="printArea"></div>
+</body>
+</html>
