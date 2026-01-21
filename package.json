@@ -1,0 +1,57 @@
+{
+  "name": "meigi-spot-kanri",
+  "version": "1.0.0",
+  "description": "名義SPOT管理",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:vendor": "node scripts/build-supabase-bundle.mjs",
+    "build:icons": "node scripts/gen-icons.mjs",
+    "build": "npm run build:icons && node scripts/sync-xlsx.mjs && npm run build:vendor",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "electron-store": "^8.1.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^29.1.0",
+    "electron-builder": "^24.13.3",
+    "esbuild": "^0.21.5",
+    "png-to-icns": "^2.1.0",
+    "sharp": "^0.33.4",
+    "to-ico": "^1.1.5"
+  },
+  "build": {
+    "appId": "com.meigi.spot.kanri",
+    "productName": "名義SPOT管理",
+    "files": [
+      "renderer/**/*",
+      "src/**/*",
+      "package.json",
+      "assets/**/*"
+    ],
+    "directories": {
+      "buildResources": "assets"
+    },
+    "asar": true,
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
