@@ -1,13 +1,15 @@
 name: build
 
 on:
+  pull_request:
+    branches: [main]
   workflow_dispatch:
-  push:
-    branches: [ main, master ]
+  push: {}
 
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -20,7 +22,7 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build vendors
         run: npm run build

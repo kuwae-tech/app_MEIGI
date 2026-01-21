@@ -1,30 +1,29 @@
 import fs from 'fs/promises';
 import path from 'path';
-import sharp from 'sharp';
-import toIco from 'to-ico';
-import pngToIcns from 'png-to-icns';
+import { build } from '@hunlongyu/electron-icon-builder';
+import { Resvg } from '@resvg/resvg-js';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const svgPath = path.join(root, 'assets', 'icon.svg');
-const outIco = path.join(root, 'assets', 'icon.ico');
-const outIcns = path.join(root, 'assets', 'icon.icns');
-const sizes = [16, 32, 64, 128, 256, 512];
+const buildDir = path.join(root, 'build');
+const outPng = path.join(buildDir, 'icon.png');
 
-const svg = await fs.readFile(svgPath);
-const pngBuffers = [];
+await fs.mkdir(buildDir, { recursive: true });
 
-for (const size of sizes) {
-  const buffer = await sharp(svg)
-    .resize(size, size, { fit: 'contain' })
-    .png()
-    .toBuffer();
-  pngBuffers.push(buffer);
-}
+const svg = await fs.readFile(svgPath, 'utf8');
+const resvg = new Resvg(svg, {
+  fitTo: {
+    mode: 'width',
+    value: 1024,
+  },
+});
+const pngData = resvg.render().asPng();
+await fs.writeFile(outPng, pngData);
 
-const icoBuffer = await toIco(pngBuffers);
-await fs.writeFile(outIco, icoBuffer);
-
-const icnsBuffer = await pngToIcns(pngBuffers);
-await fs.writeFile(outIcns, icnsBuffer);
+await build({
+  input: outPng,
+  output: buildDir,
+  flatten: true,
+});
 
 console.log('[APP] icons generated');
