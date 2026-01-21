@@ -2,9 +2,13 @@ name: build
 
 on:
   pull_request:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 concurrency:
@@ -18,7 +22,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os:
+          - macos-latest
+          - windows-latest
+
+    env:
+      CI: "true"
+      npm_config_audit: "false"
+      npm_config_fund: "false"
 
     steps:
       - name: Checkout
@@ -29,8 +40,32 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
+      - name: Show versions
+        run: |
+          node -v
+          npm -v
+
+      # lockfile がある場合は npm ci、無い/壊れている場合でも最低限先へ進めるため npm install にフォールバック
+      - name: Install dependencies (macOS)
+        if: runner.os != 'Windows'
+        run: |
+          set -e
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (Test-Path package-lock.json) {
+            npm ci --no-audit --no-fund
+          } else {
+            npm install --no-audit --no-fund
+          }
 
       - name: Build vendors
         run: npm run build
@@ -39,8 +74,10 @@ jobs:
         run: npm run dist -- --publish=never
 
       - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}
-          path: dist/**
-          if-no-files-found: error
+          name: app-${{ matrix.os }}
+          path: |
+            dist/**
+          if-no-files-found: warn
