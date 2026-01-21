@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { build } from '@hunlongyu/electron-icon-builder';
+import { spawn } from 'node:child_process';
 import { Resvg } from '@resvg/resvg-js';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
@@ -20,10 +20,23 @@ const resvg = new Resvg(svg, {
 const pngData = resvg.render().asPng();
 await fs.writeFile(outPng, pngData);
 
-await build({
-  input: outPng,
-  output: buildDir,
-  flatten: true,
-});
+const runEib = () =>
+  new Promise((resolve, reject) => {
+    const child = spawn(
+      'npx',
+      ['--no-install', 'eib', '--input', outPng, '--output', buildDir, '--flatten'],
+      { stdio: 'inherit' }
+    );
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`eib failed with code ${code}`));
+    });
+  });
+
+await runEib();
 
 console.log('[APP] icons generated');

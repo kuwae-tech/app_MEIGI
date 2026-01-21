@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "build:vendor": "node scripts/build-supabase-bundle.mjs",
-    "build:icons": "node scripts/gen-icons.mjs",
+    "gen:icons": "node scripts/gen-icons.mjs",
+    "build:icons": "npm run gen:icons",
     "build": "npm run build:icons && node scripts/sync-xlsx.mjs && npm run build:vendor",
     "dist": "electron-builder"
   },
@@ -16,7 +17,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@hunlongyu/electron-icon-builder": "^1.0.0",
+    "@hunlongyu/electron-icon-builder": "0.1.5",
     "@resvg/resvg-js": "^2.6.2",
     "electron": "^29.1.0",
     "electron-builder": "^24.13.3",
