@@ -1,26 +1,68 @@
 name: build
 
 on:
+  pull_request:
+    branches: [main]
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [main]
+
+permissions:
+  contents: write
 
 jobs:
   build:
+    env:
+      CHECKOUT_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install dependencies
-        run: npm install
+      - name: npm ci
+        id: npmci
+        continue-on-error: true
+        run: npm ci --no-audit --no-fund
+
+      - name: Regenerate lockfile (package-lock only)
+        if: steps.npmci.outcome != 'success' && github.actor != 'github-actions[bot]'
+        run: |
+          if git log -1 --pretty=%B | grep -q "\[ci-lockfile\]"; then
+            echo "Lockfile already regenerated; skipping."
+            exit 0
+          fi
+          rm -rf node_modules || true
+          npm install --package-lock-only --no-audit --no-fund
+          rm -rf node_modules || true
+          npm ci --no-audit --no-fund
+
+      - name: Commit & push regenerated lockfile
+        if: steps.npmci.outcome != 'success' && github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "No lockfile changes; nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore: regenerate package-lock [ci-lockfile]"
+          git push
 
       - name: Build vendors
         run: npm run build
