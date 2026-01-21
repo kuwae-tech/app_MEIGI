@@ -1,23 +1,62 @@
+# 目的
+GitHub Actions が「PR作成時点（pull_request）」でも自動で走るようにする。
+現在の build.yml に混入している `...`（YAML終端マーカー）等で後続が無視される/壊れるリスクを排除し、最小限の構成で確実にCIが起動する状態にする。
+
+# 変更ファイル（この1つだけ）
+.github/workflows/build.yml
+
+# 実装要件
+- build.yml は「全文を完全貼り替え」すること（部分編集禁止）
+- トリガーは以下を有効化
+  - pull_request（main/master向け）
+  - push（main/master向け）
+  - workflow_dispatch（手動実行）
+- macos-latest / windows-latest の matrix を維持
+- dist/** を artifacts として upload することを維持
+- `actions/checkout@v4` と `actions/setup-node@v4` を入れる
+- Nodeは 20 系を指定（例: "20"）
+- 既存の npm install / npm run build / npm run dist -- --publish=never を維持（ここは勝手に npm ci へ変更しない）
+- YAML 内に `...` を絶対に残さない（YAML終端で以降が無視されるため）
+- 余計な依存追加・バイナリ生成物コミットはしない（今回の目的はCIトリガーの確実化）
+
+# 探索キーワード（必要なら）
+".github/workflows/build.yml"
+"on: pull_request"
+"actions/setup-node"
+
+# 貼り替え内容（build.yml 全文）
+以下を .github/workflows/build.yml として「完全に」置き換えること。
+
+-----BEGIN FILE: .github/workflows/build.yml-----
 name: build
 
 on:
-  workflow_dispatch:
+  pull_request:
+    branches: [ main, master ]
   push:
     branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "20"
+          cache: npm
 
       - name: Install dependencies
         run: npm install
@@ -33,3 +72,18 @@ jobs:
         with:
           name: dist-${{ matrix.os }}
           path: dist/**
+-----END FILE: .github/workflows/build.yml-----
+
+# 禁止事項
+- 他ファイルは変更しない
+- build.yml に `...` を入れない/残さない
+- この変更で新しいnpm依存やアイコン生成物などのバイナリを追加しない
+
+# 完了条件
+- PRを作った時点で Actions が自動起動する（pull_requestで起動）
+- pushでも起動する
+- Actionsタブから手動実行も可能（workflow_dispatchが有効）
+- ワークフローがパースエラー無しで表示・実行される（YAMLとして正常）
+
+# ログ要件
+- 変更後、PR上で Actions が起動しているスクショ/リンクを最終コメントに残す
