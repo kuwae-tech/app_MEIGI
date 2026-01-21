@@ -1,57 +1,51 @@
 {
   "name": "meigi-spot-kanri",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "名義SPOT管理",
-  "main": "src/main/main.js",
+  "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "build:vendor": "node scripts/build-supabase-bundle.mjs",
-    "build:icons": "node scripts/gen-icons.mjs",
+    "dev": "electron .",
+    "build:icons": "npm run gen:icons",
+    "gen:icons": "node scripts/gen-icons.mjs",
+    "build:vendor": "echo \"(vendor build placeholder)\"",
     "build": "npm run build:icons && node scripts/sync-xlsx.mjs && npm run build:vendor",
-    "dist": "electron-builder"
+    "dist": "electron-builder --publish never"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.0",
-    "electron-store": "^8.1.0",
-    "xlsx": "^0.18.5"
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0",
+    "electron-store": "^10.0.0",
+    "exceljs": "^4.4.0",
+    "pdf-lib": "^1.17.1",
+    "sharp": "^0.33.0",
+    "uuid": "^10.0.0"
   },
   "devDependencies": {
-    "electron": "^29.1.0",
-    "electron-builder": "^24.13.3",
-    "esbuild": "^0.21.5",
-    "png-to-icns": "^2.1.0",
-    "sharp": "^0.33.4",
-    "to-ico": "^1.1.5"
+    "electron-icon-builder": "2.0.1"
   },
   "build": {
-    "appId": "com.meigi.spot.kanri",
+    "appId": "com.kuwae.meigi-spot-kanri",
     "productName": "名義SPOT管理",
     "files": [
-      "renderer/**/*",
-      "src/**/*",
-      "package.json",
-      "assets/**/*"
+      "**/*"
     ],
     "directories": {
-      "buildResources": "assets"
+      "buildResources": "assets",
+      "output": "dist"
     },
-    "asar": true,
     "mac": {
       "target": [
         "dmg",
         "zip"
       ],
-      "icon": "assets/icon.icns"
+      "icon": "assets/icons/icon.icns"
     },
     "win": {
       "target": [
-        "nsis"
+        "nsis",
+        "zip"
       ],
-      "icon": "assets/icon.ico"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "icon": "assets/icons/icon.ico"
     }
   }
 }
