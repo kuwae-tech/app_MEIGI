@@ -11,6 +11,10 @@ const api = {
     read: (path) => ipcRenderer.invoke('backups:read', { path }),
     cleanup: (payload) => ipcRenderer.invoke('backups:cleanup', payload)
   },
+  export: {
+    pdf: (payload) => ipcRenderer.invoke('export:pdf', payload),
+    excel: (payload) => ipcRenderer.invoke('export:excel', payload)
+  },
   notify: (payload) => ipcRenderer.invoke('notify', payload),
   app: {
     quit: () => {

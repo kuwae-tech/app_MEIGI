@@ -1,4 +1,4 @@
-const { app, ipcMain, Notification, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Notification, shell } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const Store = require('electron-store');
@@ -49,6 +49,73 @@ const ensureDir = async (dir) => {
 };
 
 const backupDir = (station) => path.join(app.getPath('userData'), 'backups', station);
+
+const escapeHtml = (value) => String(value ?? '')
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&#39;');
+
+const buildExportHtml = ({ title, meta, columns, rows }) => {
+  const headerCells = columns.map((label) => `<th>${escapeHtml(label)}</th>`).join('');
+  const bodyRows = rows.map((row) => {
+    const cells = row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('');
+    return `<tr>${cells}</tr>`;
+  }).join('');
+  return `<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(title || 'export')}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN",
+        "Hiragino Sans", "Meiryo", sans-serif;
+      color: #111;
+      margin: 24px;
+    }
+    .title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .meta {
+      font-size: 12px;
+      color: #555;
+      margin-bottom: 12px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 11px;
+    }
+    th, td {
+      border: 1px solid #c8c8c8;
+      padding: 6px 8px;
+      vertical-align: top;
+      word-break: break-word;
+    }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; page-break-inside: avoid; }
+  </style>
+</head>
+<body>
+  <div class="title">${escapeHtml(title || '名義SPOT管理')}</div>
+  <div class="meta">${escapeHtml(meta || '')}</div>
+  <table>
+    <thead>
+      <tr>${headerCells}</tr>
+    </thead>
+    <tbody>
+      ${bodyRows}
+    </tbody>
+  </table>
+</body>
+</html>`;
+};
 
 const parseBackupFiles = async (station) => {
   const dir = backupDir(station);
@@ -131,6 +198,62 @@ const registerIpc = () => {
     }
     new Notification({ title, body }).show();
     return { ok: true };
+  });
+
+  ipcMain.handle('export:pdf', async (_event, payload) => {
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'PDF書き出し',
+      defaultPath: '名義SPOT管理_書き出し.pdf',
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+    if (canceled || !filePath) return { canceled: true };
+
+    const html = buildExportHtml(payload || {});
+    let printWin = null;
+    try {
+      printWin = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true
+        }
+      });
+      await printWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      const pdfBuffer = await printWin.webContents.printToPDF({
+        printBackground: true,
+        pageSize: 'A4'
+      });
+      await fs.writeFile(filePath, pdfBuffer);
+      return { ok: true, path: filePath };
+    } catch (error) {
+      console.error('[export:pdf] failed', error);
+      return { ok: false, error: error?.message };
+    } finally {
+      if (printWin) {
+        printWin.close();
+      }
+    }
+  });
+
+  ipcMain.handle('export:excel', async (_event, payload) => {
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Excel書き出し',
+      defaultPath: payload?.suggestedName || '名義SPOT管理_書き出し.xlsx',
+      filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+    });
+    if (canceled || !filePath) return { canceled: true };
+    try {
+      const buffer = payload?.buffer ? Buffer.from(payload.buffer) : null;
+      if (!buffer) {
+        return { ok: false, error: 'missing buffer' };
+      }
+      await fs.writeFile(filePath, buffer);
+      return { ok: true, path: filePath };
+    } catch (error) {
+      console.error('[export:excel] failed', error);
+      return { ok: false, error: error?.message };
+    }
   });
 };
 

@@ -2416,39 +2416,122 @@ render();
   }
 
   // ====== UI: Export modal ======
+  const EXPORT_COLUMNS = [
+    { key:"status", label:"制作状況" },
+    { key:"dateText", label:"公演日" },
+    { key:"artist", label:"アーティスト名" },
+    { key:"title", label:"イベントタイトル" },
+    { key:"venue", label:"会場" },
+    { key:"presaleText", label:"前売り日" },
+    { key:"company", label:"申込社" },
+    { key:"person", label:"担当者" }
+  ];
+
+  const exportDefaultOn = new Set(["dateText","artist","company"]);
+
+  function getExportMeta(){
+    const stationLabel = (app.station === "802") ? "802" : "COCOLO";
+    const tabLabelMap = {
+      applied: "申請あり",
+      manual: "申請なし",
+      nostatus: "OAなし",
+      delivered: "搬入済み",
+      ended: "公演終了"
+    };
+    const tabLabel = tabLabelMap[app.ui.tab] || app.ui.tab;
+    const now = new Date();
+    return `${stationLabel} / ${tabLabel} / ${now.toLocaleString("ja-JP")}`;
+  }
+
+  function exportCellValue(rec, key){
+    if (key === "status"){
+      return normalizeStatus(rec.status) || "(未設定)";
+    }
+    if (key === "dateText"){
+      return rec.dateText || "";
+    }
+    return (rec[key] ?? "").toString();
+  }
+
+  function buildExportRows(view, columns){
+    return view.map((rec)=> columns.map((c)=> exportCellValue(rec, c.key)));
+  }
+
+  function getSelectedExportColumns(checks){
+    return EXPORT_COLUMNS.filter((c)=> checks.get(c.key)?.checked);
+  }
+
+  async function doExportPdf(view, columns){
+    if (!window.meigi?.export?.pdf){
+      alert("PDF書き出しはアプリ版で利用できます。");
+      return;
+    }
+    const payload = {
+      title: "名義SPOT管理",
+      meta: getExportMeta(),
+      columns: columns.map((c)=> c.label),
+      rows: buildExportRows(view, columns)
+    };
+    const result = await window.meigi.export.pdf(payload);
+    if (result?.canceled) return;
+    if (result?.ok){
+      toast("PDFを書き出しました");
+      closeModal();
+    }else{
+      alert("PDF書き出しに失敗しました。");
+    }
+  }
+
+  async function doExportExcel(view, columns){
+    if (!window.XLSX){
+      alert("Excel書き出しに必要なライブラリが読み込まれていません。");
+      return;
+    }
+    if (!window.meigi?.export?.excel){
+      alert("Excel書き出しはアプリ版で利用できます。");
+      return;
+    }
+    const aoa = [
+      columns.map((c)=> c.label),
+      ...buildExportRows(view, columns)
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "list");
+    const out = XLSX.write(wb, { bookType:"xlsx", type:"array" });
+    const result = await window.meigi.export.excel({
+      suggestedName: "名義SPOT管理_書き出し.xlsx",
+      buffer: out
+    });
+    if (result?.canceled) return;
+    if (result?.ok){
+      toast("Excelを書き出しました");
+      closeModal();
+    }else{
+      alert("Excel書き出しに失敗しました。");
+    }
+  }
+
   function openExportModal(){
     const view = getViewRecords();
-
-        const cols = [
-      { key:"status", label:"制作状況" },
-      { key:"dateText", label:"公演日" },
-      { key:"artist", label:"アーティスト名" },
-      { key:"title", label:"イベントタイトル" },
-      { key:"venue", label:"会場" },
-      { key:"presaleText", label:"前売り日" },
-      { key:"company", label:"申込社" },
-      { key:"person", label:"担当者" }
-    ];
-
-    const defaultOn = new Set(["dateText","artist","company"]);
 
     const body = document.createElement("div");
 
     const hint = document.createElement("div");
     hint.className = "hint";
-    hint.textContent = "現在のタブ・絞り込み・並び順を反映してコピーします（TSV形式）。";
+    hint.textContent = "現在のタブ・絞り込み・並び順を反映して書き出します。";
     body.appendChild(hint);
 
     const colList = document.createElement("div");
     colList.className = "statusFilter";
 
     const checks = new Map();
-    for (const c of cols){
+    for (const c of EXPORT_COLUMNS){
       const lb = document.createElement("label");
       lb.className = "chk";
       const cb = document.createElement("input");
       cb.type = "checkbox";
-      cb.checked = defaultOn.has(c.key);
+      cb.checked = exportDefaultOn.has(c.key);
       checks.set(c.key, cb);
       lb.appendChild(cb);
       lb.appendChild(document.createTextNode(c.label));
@@ -2469,12 +2552,12 @@ render();
     cancel.addEventListener("click", closeModal);
 
     const copyBtn = document.createElement("button");
-    copyBtn.className = "btn btnPrimary";
+    copyBtn.className = "btn btnGhost";
     copyBtn.textContent = "コピー";
     copyBtn.addEventListener("click", async ()=>{
-      const chosen = cols.filter(c => checks.get(c.key).checked);
+      const chosen = getSelectedExportColumns(checks);
       if (chosen.length === 0){
-        alert("コピーする項目を選択してください。");
+        alert("書き出し/コピーする項目を選択してください。");
         return;
       }
 
@@ -2492,7 +2575,7 @@ render();
         let line = BUL;
         let prevKey = null;
         for (const c of chosen){
-          let v = normCell(r[c.key]);
+          let v = normCell(exportCellValue(r, c.key));
           if (c.key === "company"){
             v = "（" + v + "）";
           }
@@ -2525,131 +2608,36 @@ render();
       }
     });
 
-    
     const pdfBtn = document.createElement("button");
-    pdfBtn.className = "btn btnGhost";
+    pdfBtn.className = "btn btnPrimary";
     pdfBtn.textContent = "PDFで保存";
-    pdfBtn.addEventListener("click", ()=>{
-      // Build printable view from current screen state (tab/filter/sort already applied)
-      preparePrintArea();
-      closeModal();
-      // Small delay so DOM updates settle before print dialog opens
-      setTimeout(()=>{ window.print(); }, 80);
+    pdfBtn.addEventListener("click", async ()=>{
+      const chosen = getSelectedExportColumns(checks);
+      if (chosen.length === 0){
+        alert("書き出しする項目を選択してください。");
+        return;
+      }
+      await doExportPdf(view, chosen);
     });
 
-foot.appendChild(cancel);
+    const excelBtn = document.createElement("button");
+    excelBtn.className = "btn btnPrimary";
+    excelBtn.textContent = "Excelで保存";
+    excelBtn.addEventListener("click", async ()=>{
+      const chosen = getSelectedExportColumns(checks);
+      if (chosen.length === 0){
+        alert("書き出しする項目を選択してください。");
+        return;
+      }
+      await doExportExcel(view, chosen);
+    });
+
+    foot.appendChild(cancel);
     foot.appendChild(copyBtn);
     foot.appendChild(pdfBtn);
+    foot.appendChild(excelBtn);
 
     openModal("書き出し（コピー）", body, foot);
-  }
-
-  function preparePrintArea(){
-    const pa = $("printArea");
-    if (!pa) return;
-
-    // Clear
-    pa.innerHTML = "";
-
-    const wrap = document.createElement("div");
-
-    const titleRow = document.createElement("div");
-    titleRow.className = "printTitleRow";
-
-    const title = document.createElement("div");
-    title.className = "printTitle";
-    title.textContent = "名義SPOT管理";
-
-    const meta = document.createElement("div");
-    meta.className = "printMeta";
-    const stationLabel = (app.station === "802") ? "802" : "COCOLO";
-    const tabLabelMap = {
-      applied: "申請あり",
-      manual: "申請なし",
-      nostatus: "OAなし",
-      delivered: "搬入済み",
-      ended: "公演終了"
-    };
-    const tabLabel = tabLabelMap[app.ui.tab] || app.ui.tab;
-    const now = new Date();
-    meta.textContent = `${stationLabel} / ${tabLabel} / ${now.toLocaleString("ja-JP")}`;
-
-    titleRow.appendChild(title);
-    titleRow.appendChild(meta);
-    wrap.appendChild(titleRow);
-
-    const table = document.createElement("table");
-    table.className = "printTable";
-
-    const thead = document.createElement("thead");
-    const trh = document.createElement("tr");
-
-    const cols = [
-      { key:"status", label:"制作状況", cls:"col-status" },
-      { key:"dateText", label:"公演日", cls:"col-date" },
-      { key:"artist", label:"アーティスト名", cls:"col-artist" },
-      { key:"title", label:"イベントタイトル", cls:"col-title" },
-      { key:"venue", label:"会場", cls:"col-venue" },
-      { key:"presaleText", label:"前売り日", cls:"col-presale" },
-      { key:"company", label:"申込社", cls:"col-company" },
-      { key:"person", label:"担当者", cls:"col-person" }
-    ];
-
-    for (const c of cols){
-      const th = document.createElement("th");
-      th.textContent = c.label;
-      if (c.cls) th.className = c.cls;
-      trh.appendChild(th);
-    }
-    thead.appendChild(trh);
-    table.appendChild(thead);
-
-    const tbody = document.createElement("tbody");
-    const view = getViewRecords();
-
-    for (const rec of view){
-      const tr = document.createElement("tr");
-
-      for (const c of cols){
-        const td = document.createElement("td");
-        if (c.cls) td.className = c.cls;
-
-        if (c.key === "status"){
-          const s = normalizeStatus(rec.status);
-          const badge = document.createElement("span");
-          badge.className = statusBadgeClass(s);
-          badge.textContent = s ? s : "(未設定)";
-          td.appendChild(badge);
-        } else if (c.key === "dateText"){
-          td.textContent = rec.dateText || "";
-          const lvl = dateAlertLevel(rec);
-          if (lvl === "red") td.classList.add("dateAlertRed");
-          if (lvl === "yellow") td.classList.add("dateAlertYellow");
-        } else {
-          td.textContent = (rec[c.key] ?? "").toString();
-        }
-
-        tr.appendChild(td);
-      }
-
-      tbody.appendChild(tr);
-    }
-
-    table.appendChild(tbody);
-    wrap.appendChild(table);
-
-    pa.appendChild(wrap);
-    pa.style.display = "block";
-
-    // Clean up after print
-    window.onafterprint = ()=>{
-      const pa2 = $("printArea");
-      if (pa2){
-        pa2.innerHTML = "";
-        pa2.style.display = "none";
-      }
-      window.onafterprint = null;
-    };
   }
 
   // ====== UI sync ======
