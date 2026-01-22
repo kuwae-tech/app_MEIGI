@@ -1,0 +1,117 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ensure-lockfile:
+    # PRブランチに lockfile を自動生成/修復して push するため write 権限が必要
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # PRのheadに対して push する
+          ref: ${{ github.head_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Show versions
+        run: |
+          node -v
+          npm -v
+
+      - name: Try npm ci (detect broken/missing lockfile)
+        id: try_ci
+        continue-on-error: true
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate/repair lockfile when npm ci fails
+        if: steps.try_ci.outcome != 'success'
+        run: |
+          echo "npm ci failed; generating/repairing package-lock.json..."
+          rm -f package-lock.json
+          npm install --package-lock-only --no-audit --no-fund
+          test -f package-lock.json
+
+      - name: Commit and push lockfile (only when changed)
+        if: steps.try_ci.outcome != 'success'
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "No lockfile changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore(ci): generate package-lock.json in CI"
+          git push
+
+      - name: Fail this run intentionally after pushing lockfile
+        if: steps.try_ci.outcome != 'success'
+        run: |
+          echo "Lockfile updated and pushed. Please re-run (new run will use npm ci)."
+          exit 1
+
+  build:
+    needs: [ensure-lockfile]
+    # ensure-lockfile は PR のみ。push/main や手動実行では build 単体で動く
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    permissions:
+      contents: read
+    env:
+      CI: "true"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Show versions
+        run: |
+          node -v
+          npm -v
+
+      - name: Ensure lockfile exists
+        shell: bash
+        run: |
+          if [ ! -f package-lock.json ]; then
+            echo "ERROR: package-lock.json is missing. The ensure-lockfile job should have generated it for PRs." >&2
+            echo "If this is a push/main run, commit package-lock.json or run the workflow on a PR first." >&2
+            exit 1
+          fi
+
+      - name: Install dependencies (deterministic)
+        run: npm ci --no-audit --no-fund
+
+      - name: Build (pre-dist)
+        run: npm run build
+
+      - name: Build distribution
+        run: npm run dist -- --publish never
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/**
+          if-no-files-found: error
