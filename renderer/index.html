@@ -756,6 +756,13 @@
   // ====== Helpers ======
   const $ = (id) => document.getElementById(id);
   const nowLocal = () => new Date();
+  const logData = (message, extra) => {
+    if (extra !== undefined) {
+      console.log(`[DATA] ${message}`, extra);
+    } else {
+      console.log(`[DATA] ${message}`);
+    }
+  };
 
   // ====== Station switch 3-choice dialog ======
   const stationSwitchBackdrop = () => $("stationSwitchBackdrop");
@@ -1415,18 +1422,22 @@ function daysUntilKey(k){
     try{
       saved = await loadSavedState(st);
       DIAG.idb = true;
+      logData("restore ok", { station: st });
     }catch(e){
       DIAG.idb = false;
       diagNoteError(e);
+      logData("restore failed: indexedDB", e);
     }
     diagUpdate();
 
     if (saved && saved.recordsById){
       applyAppState(saved);
       markDirty(false);
+      logData("restore ok", { station: st, records: Object.keys(saved.recordsById).length });
     } else {
       app.recordsById = {};
       markDirty(false);
+      logData("restore failed: empty", { station: st });
     }
 
     undoStack.length = 0;
@@ -1848,12 +1859,14 @@ function daysUntilKey(k){
   }
 
   async function importExcelFile(file){
+    logData(`import start ${file?.name || "unknown"}`);
     diagNoteEvent("import-start");
     DIAG.xlsx = !!window.XLSX;
     diagUpdate();
 
     if (!window.XLSX){
       showBanner("ng","Excel解析ライブラリの読み込みに失敗しました（通信環境をご確認ください）。");
+      logData("import failed: XLSX missing");
       return;
     }
 
@@ -1927,10 +1940,12 @@ function daysUntilKey(k){
       // 注意欄は表示しない（要望により廃止）
 
       render();
+      logData(`import ok rows=${rowsMain.length}`);
     } catch(e){
       console.error(e);
       showBanner("ng", (e && e.message) ? e.message : String(e));
       setLoading(false, "失敗");
+      logData("import failed: exception", e && e.message ? e.message : String(e));
     }
   }
 
@@ -2983,6 +2998,7 @@ const dz = $("dropZone");
 
     // ====== Boot ======
   (async function boot(){
+    logData("boot start");
     applyStationUI();
 
     // station toggle click
