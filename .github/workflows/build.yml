@@ -1,11 +1,14 @@
 name: build
 
 on:
-  pull_request:
-    branches: [main, master]
-  push:
-    branches: [main, master]
   workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -14,6 +17,9 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      CI: "true"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
     steps:
       - name: Checkout
@@ -22,17 +28,31 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Show versions
+        run: |
+          node -v
+          npm -v
+
+      - name: Ensure lockfile exists
+        shell: bash
+        run: |
+          if [ ! -f package-lock.json ]; then
+            echo "ERROR: package-lock.json is missing. Commit it to the repo root." >&2
+            exit 1
+          fi
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Build (vendors)
+      - name: Build (pre-dist)
         run: npm run build
 
       - name: Build distribution
-        run: npm run dist
+        run: npm run dist -- --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

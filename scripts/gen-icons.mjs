@@ -1,59 +1,53 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
 function exists(p) {
   try {
-    fs.accessSync(p);
+    fs.accessSync(p, fs.constants.F_OK);
     return true;
   } catch {
     return false;
   }
 }
 
-const root = process.cwd();
+const repoRoot = process.cwd();
+const assetsDir = path.join(repoRoot, "assets");
 
-// 既存構成に合わせて「assets/icon.png」を入力にする（無ければエラーにする）
-const inputPng = path.join(root, "assets", "icon.png");
-if (!exists(inputPng)) {
-  console.error(`[gen-icons] missing input: ${inputPng}`);
-  console.error(`[gen-icons] Put your source icon at assets/icon.png`);
+const icoPath = path.join(assetsDir, "icon.ico");
+const icnsPath = path.join(assetsDir, "icon.icns");
+const pngPath = path.join(assetsDir, "icon.png");
+
+const hasAssetsDir = exists(assetsDir);
+const hasIco = exists(icoPath);
+const hasIcns = exists(icnsPath);
+
+console.log(`[gen-icons] repoRoot=${repoRoot}`);
+console.log(`[gen-icons] assetsDir=${assetsDir}`);
+console.log(`[gen-icons] icon.ico=${hasIco ? "OK" : "MISSING"}`);
+console.log(`[gen-icons] icon.icns=${hasIcns ? "OK" : "MISSING"}`);
+console.log(`[gen-icons] icon.png=${exists(pngPath) ? "OK" : "MISSING"}`);
+
+if (!hasAssetsDir) {
+  console.error(`[gen-icons] ERROR: assets/ directory not found at: ${assetsDir}`);
   process.exit(1);
 }
 
-const outDir = path.join(root, "assets");
-const bin = path.join(
-  root,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "electron-icon-builder.cmd" : "electron-icon-builder"
-);
-
-if (!exists(bin)) {
-  console.error(`[gen-icons] electron-icon-builder not found: ${bin}`);
-  console.error(`[gen-icons] Did you run npm install?`);
-  process.exit(1);
+/**
+ * CI安定化方針:
+ * - 既に assets/icon.ico と assets/icon.icns をコミットしている運用を「正」とする。
+ * - icon.png から生成する処理は再発要因になりやすいので、ここでは行わない。
+ * - もし ico / icns のどちらかが無い場合は、明確なメッセージで失敗させる（ユーザーがファイルを用意可能）。
+ */
+if (hasIco && hasIcns) {
+  console.log("[gen-icons] Both icon.ico and icon.icns exist. Skipping generation. ✅");
+  process.exit(0);
 }
 
-// electron-icon-builder は output 配下に icons/ を作り、--flatten で icons/直下に ico/icns を置ける
-// 例: assets/icons/icon.ico, assets/icons/icon.icns
-const args = ["--input", inputPng, "--output", outDir, "--flatten"];
+const missing = [];
+if (!hasIco) missing.push("assets/icon.ico");
+if (!hasIcns) missing.push("assets/icon.icns");
 
-console.log(`[gen-icons] ${bin} ${args.join(" ")}`);
-const r = spawnSync(bin, args, { stdio: "inherit" });
-
-if (r.status !== 0) {
-  process.exit(r.status ?? 1);
-}
-
-const outIco = path.join(outDir, "icons", "icon.ico");
-const outIcns = path.join(outDir, "icons", "icon.icns");
-
-if (!exists(outIco) || !exists(outIcns)) {
-  console.error("[gen-icons] icon generation finished but outputs are missing:");
-  console.error(`- ${outIco} : ${exists(outIco) ? "OK" : "MISSING"}`);
-  console.error(`- ${outIcns} : ${exists(outIcns) ? "OK" : "MISSING"}`);
-  process.exit(1);
-}
-
-console.log("[gen-icons] OK:", outIco, outIcns);
+console.error("[gen-icons] ERROR: Missing required icon file(s): " + missing.join(", "));
+console.error("[gen-icons] Fix: add the missing file(s) to assets/ (recommended), then re-run CI.");
+console.error("[gen-icons] Optional: you may also provide assets/icon.png (1024x1024) if you want to regenerate icons later, but CI will not require it.");
+process.exit(1);
