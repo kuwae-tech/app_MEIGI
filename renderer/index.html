@@ -1762,6 +1762,37 @@ function daysUntilKey(k){
     if (n){ n.style.display = 'none'; n.innerHTML = ''; }
   }
 
+  const ID_GAP_WARN_THRESHOLD = 500;
+
+  function toNumericId(value){
+    const num = Number(String(value ?? "").trim());
+    return Number.isFinite(num) ? num : null;
+  }
+
+  function getCurrentMaxId(){
+    let maxId = null;
+    for (const rec of Object.values(app.recordsById || {})){
+      const numericId = toNumericId(rec?.id);
+      if (numericId == null) continue;
+      if (maxId == null || numericId > maxId) maxId = numericId;
+    }
+    return maxId;
+  }
+
+  function getImportIdRange(rows){
+    let minId = null;
+    let maxId = null;
+    for (const row of rows){
+      const idText = normalizeText(row["ID"]);
+      if (!idText) continue;
+      const numericId = toNumericId(idText);
+      if (numericId == null) continue;
+      if (minId == null || numericId < minId) minId = numericId;
+      if (maxId == null || numericId > maxId) maxId = numericId;
+    }
+    return { minId, maxId };
+  }
+
   function getSheetByNameOrFirst(wb, preferred){
     if (wb.SheetNames.includes(preferred)) return preferred;
     return wb.SheetNames[0];
@@ -1907,6 +1938,9 @@ function daysUntilKey(k){
       }
 
       const rowsMain = readRows(wb, mainSheet);
+      const currentMaxId = getCurrentMaxId();
+      const { minId: importMinId, maxId: importMaxId } = getImportIdRange(rowsMain);
+      logData(`[IMPORT] currentMaxId=${currentMaxId} importMinId=${importMinId} importMaxId=${importMaxId}`);
 
       let endedSheetName = null;
       if (wb.SheetNames.includes("公演終了")) endedSheetName = "公演終了";
@@ -1917,6 +1951,26 @@ function daysUntilKey(k){
         for (const row of rowsEnded){
           const id = normalizeText(row["ID"]);
           if (id) endedIds.add(id);
+        }
+      }
+
+      if (currentMaxId != null && importMinId != null && importMaxId != null){
+        const gapMax = Math.max(
+          Math.abs(importMaxId - currentMaxId),
+          Math.abs(importMinId - currentMaxId)
+        );
+        if (gapMax >= ID_GAP_WARN_THRESHOLD){
+          const message = [
+            "取り込むデータのIDが現在のデータと大きく異なります。",
+            "ステーションを間違えていないか確認してください。",
+            `currentMaxId=${currentMaxId} / importMinId=${importMinId} / importMaxId=${importMaxId}`
+          ].join("\n");
+          const ok = confirm(message);
+          logData(`[IMPORT] warn gap=${gapMax} threshold=${ID_GAP_WARN_THRESHOLD} userChoice=${ok ? "continue" : "cancel"}`);
+          if (!ok){
+            setLoading(false, "待機中");
+            return;
+          }
         }
       }
 
