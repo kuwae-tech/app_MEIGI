@@ -12,18 +12,21 @@ concurrency:
 
 jobs:
   ensure-lockfile:
-    # PRブランチに lockfile を自動生成/修復して push するため write 権限が必要
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      ref: ${{ steps.out.outputs.ref }}
+      lockfile_changed: ${{ steps.out.outputs.lockfile_changed }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (PR head or current ref)
+        uses: actions/checkout@v4
         with:
-          # PRのheadに対して push する
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
 
@@ -38,6 +41,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Generate/repair lockfile when npm ci fails
+        id: gen_lock
         if: steps.try_ci.outcome != 'success'
         run: |
           echo "npm ci failed; generating/repairing package-lock.json..."
@@ -45,28 +49,33 @@ jobs:
           npm install --package-lock-only --no-audit --no-fund
           test -f package-lock.json
 
-      - name: Commit and push lockfile (only when changed)
-        if: steps.try_ci.outcome != 'success'
+      - name: Determine lockfile change
+        id: diff_lock
         run: |
           if git diff --quiet -- package-lock.json; then
-            echo "No lockfile changes to commit."
-            exit 0
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      # PR かつ同一リポジトリの head の場合のみ push する（権限問題回避）
+      - name: Commit and push lockfile (PR only, when changed)
+        if: steps.diff_lock.outputs.changed == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package-lock.json
           git commit -m "chore(ci): generate package-lock.json in CI"
           git push
 
-      - name: Fail this run intentionally after pushing lockfile
-        if: steps.try_ci.outcome != 'success'
+      - name: Output ref for build
+        id: out
         run: |
-          echo "Lockfile updated and pushed. Please re-run (new run will use npm ci)."
-          exit 1
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "lockfile_changed=${{ steps.diff_lock.outputs.changed }}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: [ensure-lockfile]
-    # ensure-lockfile は PR のみ。push/main や手動実行では build 単体で動く
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -78,9 +87,14 @@ jobs:
       CI: "true"
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (ensured ref)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.ensure-lockfile.outputs.ref }}
+          fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node (with cache)
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
@@ -95,8 +109,7 @@ jobs:
         shell: bash
         run: |
           if [ ! -f package-lock.json ]; then
-            echo "ERROR: package-lock.json is missing. The ensure-lockfile job should have generated it for PRs." >&2
-            echo "If this is a push/main run, commit package-lock.json or run the workflow on a PR first." >&2
+            echo "ERROR: package-lock.json is missing." >&2
             exit 1
           fi
 
