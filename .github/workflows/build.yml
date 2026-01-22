@@ -3,136 +3,106 @@ name: Build
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
-
-permissions:
-  contents: write
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
+env:
+  CI: true
+  NODE_VERSION: "20"
+  # Ensure electron-builder can "publish" safely even if publish is disabled.
+  # (We also pass --publish never in scripts, but some paths still check GH_TOKEN presence.)
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   prepare:
-    name: "prepare (ensure deps + lockfile)"
+    name: prepare (ensure deps + lockfile)
     runs-on: ubuntu-latest
     outputs:
-      prepared_ref: ${{ steps.out.outputs.prepared_ref }}
-      ready: ${{ steps.out.outputs.ready }}
+      prepared_sha: ${{ steps.prep.outputs.prepared_sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Show versions
         run: |
           node -v
           npm -v
 
-      - name: Ensure xlsx dependency exists in package.json
+      - name: Ensure package-lock.json exists (create if missing)
         shell: bash
         run: |
           set -euo pipefail
-          node - <<'NODE'
-          const fs = require('fs');
-          const p = 'package.json';
-          const j = JSON.parse(fs.readFileSync(p,'utf8'));
-          const deps = j.dependencies || {};
-          if (!deps.xlsx) {
-            console.log('[prepare] xlsx missing in dependencies. Will add via npm.');
-            process.exit(10);
-          }
-          console.log('[prepare] xlsx already present:', deps.xlsx);
-          NODE
-          code=$?
-          if [ "$code" -eq 10 ]; then
-            npm install --save-exact xlsx
-          elif [ "$code" -ne 0 ]; then
-            exit "$code"
-          fi
-
-      - name: Ensure lockfile exists & is consistent (npm install if needed)
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -f package-lock.json ]; then
-            echo "[prepare] package-lock.json missing -> generating with npm install"
-            npm install
-          else
-            echo "[prepare] package-lock.json exists -> verifying via npm ci"
-            if npm ci --include=dev; then
-              echo "[prepare] npm ci OK"
-            else
-              echo "[prepare] npm ci failed -> repairing lockfile via npm install"
-              npm install
-            fi
-          fi
-
-      - name: Commit & push if lockfile/package.json changed
-        id: commit
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          git status --porcelain
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "[prepare] no changes to commit"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "new_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json exists"
             exit 0
           fi
+          echo "[warn] package-lock.json is missing -> generating via npm install (will be committed)"
+          npm install --include=dev
 
+      - name: Ensure lockfile is consistent (npm install if npm ci would fail)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ]; then
+            echo "Attempting npm ci (dry run)"
+            if npm ci --ignore-scripts --include=dev; then
+              echo "npm ci OK"
+              exit 0
+            fi
+            echo "[warn] npm ci failed -> repairing lockfile with npm install"
+            rm -rf node_modules
+            npm install --include=dev
+          fi
+
+      - name: Commit lockfile if changed
+        id: prep
+        shell: bash
+        run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add package.json package-lock.json || true
-          git commit -m "chore(ci): ensure lockfile & deps [skip ci]" || true
-          git push origin HEAD:main
-
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "new_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Output prepared ref
-        id: out
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${{ steps.commit.outputs.changed }}" = "true" ]; then
-            echo "prepared_ref=${{ steps.commit.outputs.new_sha }}" >> "$GITHUB_OUTPUT"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::error::Lockfile/deps were updated and pushed to main. A new workflow run will start automatically. This run will stop here."
-            exit 1
+          # untracked / modified detection
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "[info] Changes detected, committing..."
+            git add package-lock.json package.json || true
+            git commit -m "chore(ci): ensure lockfile for deterministic builds" || true
+            git push origin HEAD:${GITHUB_REF_NAME}
           else
-            echo "prepared_ref=${{ steps.commit.outputs.new_sha }}" >> "$GITHUB_OUTPUT"
-            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "[info] No changes to commit."
           fi
 
+          PREPARED_SHA="$(git rev-parse HEAD)"
+          echo "prepared_sha=$PREPARED_SHA" >> "$GITHUB_OUTPUT"
+          echo "[info] prepared_sha=$PREPARED_SHA"
+
   build:
-    name: "build (${{ matrix.os }})"
-    needs: [ prepare ]
-    if: needs.prepare.outputs.ready == 'true'
+    name: build (${{ matrix.os }})
+    needs: prepare
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ macos-latest, windows-latest ]
-
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        os: [macos-latest, windows-latest]
 
     steps:
       - name: Checkout (prepared sha)
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.prepared_ref }}
-          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.prepared_sha }}
 
       - name: Detect lockfile presence
         id: lock
@@ -141,62 +111,64 @@ jobs:
           set -euo pipefail
           if [ -f package-lock.json ]; then
             echo "has_lockfile=true" >> "$GITHUB_OUTPUT"
+            echo "[info] package-lock.json found"
           else
             echo "has_lockfile=false" >> "$GITHUB_OUTPUT"
+            echo "[warn] package-lock.json missing"
           fi
 
       - name: Setup Node (with cache)
         if: steps.lock.outputs.has_lockfile == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: "package-lock.json"
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Setup Node (no cache)
         if: steps.lock.outputs.has_lockfile != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Show versions
+        shell: bash
         run: |
           node -v
           npm -v
 
-      - name: Ensure lockfile exists
+      - name: Install dependencies (deterministic, include dev)
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f package-lock.json ]; then
-            echo "ERROR: package-lock.json is missing."
-            exit 1
+          if [ -f package-lock.json ]; then
+            npm ci --include=dev
+          else
+            npm install --include=dev
           fi
-
-      - name: Install dependencies (deterministic, include dev)
-        run: npm ci --include=dev
 
       - name: "Sanity check - xlsx must resolve"
-        run: node -e "console.log('xlsx resolved to:', require.resolve('xlsx'))"
-
-      - name: "Normalize xlsx bundle path for sync script (if needed)"
         shell: bash
         run: |
           set -euo pipefail
-          if [ -f scripts/sync-xlsx.mjs ]; then
-            node scripts/sync-xlsx.mjs
-          else
-            echo "[warn] scripts/sync-xlsx.mjs not found; skipping"
-          fi
+          node -e "console.log('xlsx resolved to:', require.resolve('xlsx'))"
+
+      - name: Normalize xlsx bundle path for sync script (if needed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/sync-xlsx.mjs
 
       - name: Build (pre-dist)
-        run: npm run build
-
-      - name: Build distribution (no publish)
         shell: bash
         run: |
           set -euo pipefail
-          # In case package.json scripts don't include --publish never, force it here.
+          npm run build
+
+      - name: Build distribution
+        shell: bash
+        run: |
+          set -euo pipefail
           npm run dist -- --publish never
 
       - name: List dist
@@ -211,9 +183,61 @@ jobs:
             echo "[warn] dist directory not found"
           fi
 
-      - name: Upload artifacts (dist)
+      - name: Collect deliverables (app only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT_DIR="deliverables/${{ matrix.os }}"
+          mkdir -p "$OUT_DIR"
+
+          if [ ! -d dist ]; then
+            echo "[warn] dist directory not found; nothing to collect"
+          else
+            case "${{ matrix.os }}" in
+              macos-latest)
+                shopt -s nullglob
+                files=(dist/*.dmg)
+                if [ ${#files[@]} -eq 0 ]; then
+                  echo "[warn] no .dmg found; fallback to .zip"
+                  files=(dist/*mac*.zip dist/*.zip)
+                fi
+                for f in "${files[@]}"; do
+                  cp -v "$f" "$OUT_DIR/" || true
+                done
+                ;;
+
+              windows-latest)
+                shopt -s nullglob
+                files=(dist/*Setup*.exe dist/*.exe)
+                for f in "${files[@]}"; do
+                  base="$(basename "$f")"
+                  case "$base" in
+                    *unins*|*uninstaller*) continue ;;
+                  esac
+                  cp -v "$f" "$OUT_DIR/" || true
+                done
+                if [ -z "$(ls -A "$OUT_DIR" 2>/dev/null)" ]; then
+                  echo "[warn] no .exe found; fallback to .zip"
+                  files=(dist/*.zip)
+                  for f in "${files[@]}"; do
+                    cp -v "$f" "$OUT_DIR/" || true
+                  done
+                fi
+                ;;
+
+              *)
+                echo "[warn] unknown OS matrix value: ${{ matrix.os }}"
+                cp -v dist/* "$OUT_DIR/" || true
+                ;;
+            esac
+          fi
+
+          echo "[deliverables]"
+          find deliverables -maxdepth 3 -type f -print -exec ls -lh {} \;
+
+      - name: Upload artifacts (app only)
         uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}
-          path: dist/**
+          name: app-${{ matrix.os }}
+          path: deliverables/${{ matrix.os }}/**
           if-no-files-found: warn
