@@ -2,37 +2,167 @@ name: build
 
 on:
   pull_request:
-    branches: [main, master]
   push:
-    branches: [main, master]
+    branches:
+      - main
   workflow_dispatch:
 
-jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
+jobs:
+  ensure-lockfile:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      ref: ${{ steps.out.outputs.ref }}
+      lockfile_changed: ${{ steps.out.outputs.lockfile_changed }}
     steps:
-      - name: Checkout
+      - name: Checkout (PR head or current ref)
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: "20"
 
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+      - name: Show versions
+        run: |
+          node -v
+          npm -v
+          npm config get production || true
+          npm config get omit || true
 
-      - name: Build (vendors)
+      - name: Try npm ci (detect broken/missing lockfile)
+        id: try_ci
+        continue-on-error: true
+        env:
+          NODE_ENV: development
+          NPM_CONFIG_PRODUCTION: "false"
+          NPM_CONFIG_OMIT: ""
+        run: npm ci --include=dev --no-audit --no-fund
+
+      - name: Generate/repair lockfile when npm ci fails
+        if: steps.try_ci.outcome != 'success'
+        env:
+          NODE_ENV: development
+          NPM_CONFIG_PRODUCTION: "false"
+          NPM_CONFIG_OMIT: ""
+        run: |
+          echo "npm ci failed; generating/repairing package-lock.json..."
+          rm -f package-lock.json
+          npm install --package-lock-only --no-audit --no-fund
+          test -f package-lock.json
+
+      - name: Determine lockfile change (include untracked)
+        id: diff_lock
+        shell: bash
+        run: |
+          status="$(git status --porcelain -- package-lock.json || true)"
+          if [ -n "$status" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push lockfile (PR only, when changed)
+        if: steps.diff_lock.outputs.changed == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore(ci): generate package-lock.json in CI"
+          git push
+
+      - name: Output ref for build
+        id: out
+        shell: bash
+        run: |
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "lockfile_changed=${{ steps.diff_lock.outputs.changed }}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs:
+      - ensure-lockfile
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+    permissions:
+      contents: read
+    env:
+      CI: "true"
+      NODE_ENV: development
+      NPM_CONFIG_PRODUCTION: "false"
+      NPM_CONFIG_OMIT: ""
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Checkout (ensured ref)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.ensure-lockfile.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Detect lockfile presence
+        id: lf
+        shell: bash
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node (with cache)
+        if: steps.lf.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Node (no cache)
+        if: steps.lf.outputs.exists != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Show versions
+        run: |
+          node -v
+          npm -v
+          npm config get production || true
+          npm config get omit || true
+
+      - name: Ensure lockfile exists
+        shell: bash
+        run: |
+          if [ ! -f package-lock.json ]; then
+            echo "ERROR: package-lock.json is missing." >&2
+            exit 1
+          fi
+
+      - name: Install dependencies (deterministic, include dev)
+        run: npm ci --include=dev --no-audit --no-fund
+
+      - name: Sanity check: xlsx must resolve
+        shell: bash
+        run: |
+          node -e "console.log('xlsx resolved to:', require.resolve('xlsx'))"
+
+      - name: Build (pre-dist)
         run: npm run build
 
       - name: Build distribution
-        run: npm run dist
+        run: npm run dist -- --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
