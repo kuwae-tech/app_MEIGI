@@ -3053,21 +3053,50 @@ const dz = $("dropZone");
   let allowUnload = false;
 
   const allowAppClose = () => {
-    if (!allowUnload){
-      console.log("[UI] close click");
-    }
     allowUnload = true;
+  };
+
+  const logCloseDecision = (choice, isDirty) => {
+    console.log(`[UI] close click dirty=${isDirty} choice=${choice}`);
+  };
+
+  const handleAppCloseRequest = async () => {
+    const isDirty = !!dirty;
+    if (!isDirty) {
+      logCloseDecision("continue", isDirty);
+      allowAppClose();
+      window.meigi?.app?.quit?.();
+      return;
+    }
+
+    const choice = await openStationSwitchDialog();
+    if (choice === "cancel") {
+      logCloseDecision("cancel", isDirty);
+      window.meigi?.app?.cancelQuit?.();
+      return;
+    }
+    if (choice === "save") {
+      const ok = await saveNow({ showToast: false });
+      if (!ok) {
+        logCloseDecision("cancel", isDirty);
+        window.meigi?.app?.cancelQuit?.();
+        return;
+      }
+    }
+
+    logCloseDecision("continue", isDirty);
+    allowAppClose();
+    window.meigi?.app?.quit?.();
   };
 
   if (window.meigi?.app?.onPrepareQuit) {
     window.meigi.app.onPrepareQuit(() => {
-      allowAppClose();
+      handleAppCloseRequest();
     });
   }
 
   const requestAppQuit = () => {
-    allowAppClose();
-    window.meigi?.app?.quit?.();
+    handleAppCloseRequest();
   };
 
   // Dirty close warning
