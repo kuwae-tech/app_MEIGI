@@ -1,38 +1,35 @@
 name: build
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
       - "codex/**"
-      - "feature/**"
+      - "chore/**"
       - "fix/**"
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: write
 
-concurrency:
-  group: build-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  ensure-lockfile:
-    name: ensure-lockfile
+  prepare:
+    name: prepare (ensure deps + lockfile)
     runs-on: ubuntu-latest
-
+    outputs:
+      prepared_sha: ${{ steps.out.outputs.prepared_sha }}
+      has_patch: ${{ steps.out.outputs.has_patch }}
     steps:
-      - name: Checkout (branch head)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.head_ref || github.ref_name }}
 
-      - name: Setup Node (no cache; lockfile may be missing)
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20.19.6"
+          node-version: 20
 
       - name: Show versions
         run: |
@@ -40,124 +37,114 @@ jobs:
           npm -v
           git --version
 
-      - name: Detect lockfile presence
-        id: lf
-        shell: bash
+      - name: Ensure required dependencies exist in package.json (xlsx, electron-store)
         run: |
-          if [ -f package-lock.json ]; then
-            echo "has=true" >> "$GITHUB_OUTPUT"
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'package.json';
+          const raw = fs.readFileSync(path, 'utf8');
+          const pkg = JSON.parse(raw);
+
+          pkg.dependencies ||= {};
+
+          // 必須（CI/ビルドが暗黙に依存しているもの）
+          if (!pkg.dependencies['xlsx']) pkg.dependencies['xlsx'] = '^0.18.5';
+          if (!pkg.dependencies['electron-store']) pkg.dependencies['electron-store'] = '^8.1.0';
+
+          // 念のため scripts が無い場合でも壊さない
+          pkg.scripts ||= {};
+
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+          console.log('[prepare] ensured deps: xlsx, electron-store');
+          NODE
+
+      - name: Generate/repair package-lock.json (package-lock-only)
+        run: |
+          npm install --package-lock-only --no-audit --no-fund --ignore-scripts
+
+      - name: Create patch if changes exist (PR safety)
+        if: github.event_name == 'pull_request'
+        run: |
+          git status --porcelain
+          if [ -n "$(git status --porcelain)" ]; then
+            git diff > prepared.patch
+            echo "[prepare] created prepared.patch"
           else
-            echo "has=false" >> "$GITHUB_OUTPUT"
+            echo "[prepare] no changes"
           fi
 
-      - name: Try npm ci (detect broken lockfile)
-        id: ci_try
-        if: steps.lf.outputs.has == 'true'
-        continue-on-error: true
-        shell: bash
-        run: |
-          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Upload patch (only when created)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepared-patch
+          path: prepared.patch
+          if-no-files-found: ignore
+          retention-days: 7
 
-      - name: Generate/repair lockfile when needed
-        id: gen
-        shell: bash
+      - name: Commit & push fixes (push / workflow_dispatch only)
+        if: github.event_name != 'pull_request'
         run: |
-          set -e
-          NEED=0
-          if [ "${{ steps.lf.outputs.has }}" != "true" ]; then
-            echo "[lockfile] missing -> will generate"
-            NEED=1
-          elif [ "${{ steps.ci_try.outcome }}" != "success" ]; then
-            echo "[lockfile] npm ci failed -> will regenerate"
-            NEED=1
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add package.json package-lock.json
+            git commit -m "chore(ci): ensure xlsx dependency and lockfile"
+            git push
+            echo "[prepare] pushed fixes to branch"
           else
-            echo "[lockfile] looks OK"
+            echo "[prepare] no changes to commit"
           fi
 
-          if [ "$NEED" -eq 1 ]; then
-            # generate lockfile deterministically (no scripts)
-            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          fi
-
-          echo "need=$NEED" >> "$GITHUB_OUTPUT"
-
-      - name: Commit & push lockfile if changed
-        id: push
-        if: steps.gen.outputs.need == '1'
-        shell: bash
+      - name: Output prepared sha
+        id: out
         run: |
-          set -e
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "[lockfile] no changes after generation"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          echo "prepared_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ -f prepared.patch ] && [ -s prepared.patch ]; then
+            echo "has_patch=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_patch=false" >> "$GITHUB_OUTPUT"
           fi
-
-          echo "[lockfile] changes detected -> committing"
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          git commit -m "chore(ci): generate/repair package-lock.json"
-
-          BR="${{ github.head_ref || github.ref_name }}"
-
-          # For pull_request from forks, pushing will fail. Detect and stop with a clear message.
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
-            echo "::error::This PR is from a fork. Please commit package-lock.json in the PR branch manually."
-            exit 1
-          fi
-
-          git push origin "HEAD:$BR"
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-
-      - name: Stop here if lockfile was pushed (rerun required)
-        if: steps.push.outputs.changed == 'true'
-        shell: bash
-        run: |
-          echo "::error::package-lock.json was generated/repaired and pushed. Re-run the workflow (next run will use npm ci deterministically)."
-          exit 1
 
   build:
     name: build (${{ matrix.os }})
-    needs: ensure-lockfile
-    runs-on: ${{ matrix.os }}
-
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout (branch head)
+      - name: Checkout (prepared sha)
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.prepare.outputs.prepared_sha }}
           fetch-depth: 0
-          ref: ${{ github.head_ref || github.ref_name }}
 
-      - name: Detect lockfile presence
-        id: lf2
+      - name: Download patch (PR only)
+        if: needs.prepare.outputs.has_patch == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: prepared-patch
+          path: .
+
+      - name: Apply patch (PR only)
+        if: needs.prepare.outputs.has_patch == 'true'
         shell: bash
         run: |
-          if [ -f package-lock.json ]; then
-            echo "has=true" >> "$GITHUB_OUTPUT"
+          ls -la
+          if [ -f prepared.patch ] && [ -s prepared.patch ]; then
+            git apply prepared.patch
+            echo "[build] applied prepared.patch"
           else
-            echo "has=false" >> "$GITHUB_OUTPUT"
+            echo "[build] prepared.patch not found or empty"
           fi
 
-      # IMPORTANT: setup-node cache step must not run when lockfile path is unresolved.
-      - name: Setup Node (with cache)
-        if: steps.lf2.outputs.has == 'true'
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20.19.6"
-          cache: "npm"
-          cache-dependency-path: package-lock.json
-
-      - name: Setup Node (no cache)
-        if: steps.lf2.outputs.has != 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20.19.6"
+          node-version: 20
 
       - name: Show versions
         run: |
@@ -168,99 +155,31 @@ jobs:
         shell: bash
         run: |
           if [ ! -f package-lock.json ]; then
-            echo "::error::package-lock.json is missing. Run ensure-lockfile job (or commit lockfile) first."
+            echo "ERROR: package-lock.json is missing."
             exit 1
           fi
 
       - name: Install dependencies (deterministic, include dev)
-        shell: bash
         run: |
-          # Force dev deps install even if NODE_ENV=production is set somewhere
           npm ci --include=dev --no-audit --no-fund
 
       - name: Sanity check - xlsx must resolve
-        shell: bash
         run: |
           node -e "console.log('xlsx resolved to:', require.resolve('xlsx'))"
 
-      - name: Normalize xlsx bundle path for sync script (if needed)
-        shell: bash
-        run: |
-          node <<'NODE'
-          const fs = require('fs');
-          const path = require('path');
-
-          function exists(p){ try { fs.accessSync(p); return true; } catch { return false; } }
-
-          let resolved;
-          try {
-            resolved = require.resolve('xlsx');
-          } catch (e) {
-            console.error("[xlsx] require.resolve('xlsx') failed. Ensure xlsx is in dependencies/devDependencies.");
-            process.exit(1);
-          }
-
-          // module root = .../node_modules/xlsx/...
-          const modRoot = path.resolve(resolved, '..', '..');
-          const target = path.join(modRoot, 'dist', 'xlsx.full.min.js');
-
-          if (exists(target)) {
-            console.log('[xlsx] ok:', target);
-            process.exit(0);
-          }
-
-          const candidates = [
-            path.join(modRoot, 'dist', 'xlsx.full.min.mjs'),
-            path.join(modRoot, 'dist', 'xlsx.full.min.cjs'),
-            path.join(modRoot, 'dist', 'xlsx.full.js'),
-            path.join(modRoot, 'dist', 'xlsx.min.js'),
-            path.join(modRoot, 'xlsx.full.min.js'),
-            path.join(modRoot, 'xlsx.full.js'),
-            path.join(modRoot, 'xlsx.js'),
-          ].filter(exists);
-
-          if (candidates.length === 0) {
-            console.error('[xlsx] Could not find any bundle candidates under:', modRoot);
-            process.exit(1);
-          }
-
-          fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.copyFileSync(candidates[0], target);
-          console.log('[xlsx] copied:', candidates[0], '->', target);
-          NODE
-
       - name: Build (pre-dist)
-        shell: bash
         run: |
           npm run build
 
       - name: Build distribution
-        shell: bash
         run: |
-          set -e
-          # Prefer dist, fallback to pack if present
-          if npm run -s | grep -qE '^[[:space:]]+dist'; then
-            npm run dist
-          elif npm run -s | grep -qE '^[[:space:]]+pack'; then
-            npm run pack
-          else
-            echo "::error::No dist/pack script found in package.json"
-            npm run -s
-            exit 1
-          fi
+          npm run dist -- --publish never
 
-      - name: Upload artifacts
+      - name: Upload artifacts (dist)
         uses: actions/upload-artifact@v4
         with:
-          name: app-${{ matrix.os }}
-          if-no-files-found: warn
+          name: dist-${{ matrix.os }}
           path: |
             dist/**
-            release/**
-            out/**
-            build/**
-            **/*.dmg
-            **/*.exe
-            **/*.msi
-            **/*.zip
-            **/*.AppImage
+          if-no-files-found: warn
+          retention-days: 7
