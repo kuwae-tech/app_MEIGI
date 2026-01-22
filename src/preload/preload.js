@@ -5,10 +5,6 @@ const api = {
     get: () => ipcRenderer.invoke('settings:get'),
     set: (next) => ipcRenderer.invoke('settings:set', next)
   },
-  data: {
-    loadInitial: () => ipcRenderer.invoke('data:loadInitial'),
-    saveExcel: (payload) => ipcRenderer.invoke('data:saveExcel', payload)
-  },
   backups: {
     save: (payload) => ipcRenderer.invoke('backups:save', payload),
     list: (station) => ipcRenderer.invoke('backups:list', { station }),

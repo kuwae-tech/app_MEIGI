@@ -756,7 +756,6 @@
   // ====== Helpers ======
   const $ = (id) => document.getElementById(id);
   const nowLocal = () => new Date();
-  const bridge = window.meigi || null;
   const logData = (message, extra) => {
     if (extra !== undefined) {
       console.log(`[DATA] ${message}`, extra);
@@ -1416,26 +1415,29 @@ function daysUntilKey(k){
       updateUndoRedoButtons();
       syncUIFromState();
       render();
-      return true;
+      return;
     }
 
     let saved = null;
     try{
       saved = await loadSavedState(st);
       DIAG.idb = true;
+      logData("restore ok", { station: st });
     }catch(e){
       DIAG.idb = false;
       diagNoteError(e);
+      logData("restore failed: indexedDB", e);
     }
     diagUpdate();
 
-    const hasRecords = !!(saved && saved.recordsById && Object.keys(saved.recordsById).length > 0);
     if (saved && saved.recordsById){
       applyAppState(saved);
       markDirty(false);
+      logData("restore ok", { station: st, records: Object.keys(saved.recordsById).length });
     } else {
       app.recordsById = {};
       markDirty(false);
+      logData("restore failed: empty", { station: st });
     }
 
     undoStack.length = 0;
@@ -1443,7 +1445,6 @@ function daysUntilKey(k){
     updateUndoRedoButtons();
     syncUIFromState();
     render();
-    return hasRecords;
   }
 
   async function switchStation(next){
@@ -1753,25 +1754,6 @@ function daysUntilKey(k){
     return rows;
   }
 
-  function arrayBufferToBase64(buffer){
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++){
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
-  }
-
-  function base64ToArrayBuffer(base64){
-    const binary = atob(base64);
-    const len = binary.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++){
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes.buffer;
-  }
-
   function parseRecordFromRow(row){
     const id = normalizeText(row["ID"]);
     if (!id) return null;
@@ -1876,28 +1858,26 @@ function daysUntilKey(k){
     return updated;
   }
 
-  async function importExcelBuffer(arrayBuffer, name, options = {}){
-    const source = options.source || "unknown";
+  async function importExcelFile(file){
+    logData(`import start ${file?.name || "unknown"}`);
     diagNoteEvent("import-start");
     DIAG.xlsx = !!window.XLSX;
     diagUpdate();
 
-    logData(`import start source=${source} name=${name || "unknown"}`);
-
     if (!window.XLSX){
-      const msg = "Excel解析ライブラリの読み込みに失敗しました（通信環境をご確認ください）。";
-      showBanner("ng", msg);
-      logData(`import failed source=${source}`, msg);
-      return false;
+      showBanner("ng","Excel解析ライブラリの読み込みに失敗しました（通信環境をご確認ください）。");
+      logData("import failed: XLSX missing");
+      return;
     }
 
     setLoading(true, "読み込み中…");
     hideBanner();
     showNotices([]);
-    $("fileName").textContent = name || "unknown.xlsx";
+    $("fileName").textContent = file.name;
 
     try{
-      const wb = XLSX.read(arrayBuffer, { type:"array", cellDates:true });
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type:"array", cellDates:true });
 
       const notices = [];
       let newCount=0, updCount=0, statusUpd=0, statusRejected=0;
@@ -1960,83 +1940,12 @@ function daysUntilKey(k){
       // 注意欄は表示しない（要望により廃止）
 
       render();
-      logData(`import success source=${source}`, { newCount, updCount, statusUpd, statusRejected });
-
-      if (options.persist !== false && bridge?.data?.saveExcel){
-        try{
-          const base64 = arrayBufferToBase64(arrayBuffer);
-          const saveResult = await bridge.data.saveExcel({ base64, name });
-          if (!saveResult?.ok){
-            logData("save internal excel failed", saveResult);
-          }
-        }catch(saveError){
-          logData("save internal excel failed", saveError);
-        }
-      }
-      return true;
+      logData(`import ok rows=${rowsMain.length}`);
     } catch(e){
       console.error(e);
-      const msg = (e && e.message) ? e.message : String(e);
-      showBanner("ng", msg);
+      showBanner("ng", (e && e.message) ? e.message : String(e));
       setLoading(false, "失敗");
-      logData(`import failed source=${source}`, msg);
-      return false;
-    }
-  }
-
-  async function importExcelFile(file, options = {}){
-    const buf = await file.arrayBuffer();
-    return importExcelBuffer(buf, file.name, { ...options, source: options.source || "file" });
-  }
-
-  function buildSampleWorkbook(){
-    const sampleRows = [{
-      "ID": "sample-001",
-      "申込社": "サンプル社",
-      "担当者": "山田",
-      "アーティスト名": "サンプルアーティスト",
-      "イベントタイトル": "サンプル公演",
-      "会場名": "サンプルホール",
-      "公演日": "2025-01-01",
-      "前売日": "2024-12-01",
-      "制作状況": "未制作",
-      "メモ": "初回起動用のサンプルです。"
-    }];
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(sampleRows);
-    XLSX.utils.book_append_sheet(wb, ws, "製作状況");
-    return XLSX.write(wb, { bookType: "xlsx", type: "array" });
-  }
-
-  async function loadInitialExcel(){
-    logData("initial load start");
-    if (!bridge?.data?.loadInitial){
-      const msg = "preload bridge not available";
-      showBanner("ng", msg);
-      logData("initial load failed", msg);
-      return;
-    }
-    try{
-      const result = await bridge.data.loadInitial();
-      if (result?.ok && result.base64){
-        const buffer = base64ToArrayBuffer(result.base64);
-        await importExcelBuffer(buffer, result.name || "internal.xlsx", { source: "internal", persist: false });
-        logData("initial load success", { path: result.path });
-        return;
-      }
-      if (result?.missing){
-        logData("initial load missing, create sample");
-        const sampleBuffer = buildSampleWorkbook();
-        await importExcelBuffer(sampleBuffer, "サンプル.xlsx", { source: "sample", persist: true });
-        return;
-      }
-      const msg = result?.error || "内部データの読み込みに失敗しました。";
-      showBanner("ng", msg);
-      logData("initial load failed", msg);
-    }catch(e){
-      const msg = (e && e.message) ? e.message : String(e);
-      showBanner("ng", msg);
-      logData("initial load failed", msg);
+      logData("import failed: exception", e && e.message ? e.message : String(e));
     }
   }
 
@@ -3052,12 +2961,9 @@ tbody.appendChild(tr);
     });
   }
 
-  $("fileInput").addEventListener("change", async (e)=>{
+$("fileInput").addEventListener("change", async (e)=>{
     const f = e.target.files && e.target.files[0];
-    if (f){
-      logData(`file selected name=${f.name}`);
-      await importExcelFile(f, { source: "picker", persist: true });
-    }
+    if (f) await importExcelFile(f);
     e.target.value = "";
   });
 
@@ -3077,10 +2983,7 @@ const dz = $("dropZone");
     e.preventDefault();
     dz.classList.remove("drag");
     const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f){
-      logData(`drop accepted name=${f.name}`);
-      await importExcelFile(f, { source: "drop", persist: true });
-    }
+    if (f) await importExcelFile(f);
   });
 
   DIAG.listeners = true;
@@ -3095,6 +2998,7 @@ const dz = $("dropZone");
 
     // ====== Boot ======
   (async function boot(){
+    logData("boot start");
     applyStationUI();
 
     // station toggle click
@@ -3108,10 +3012,7 @@ const dz = $("dropZone");
     }
 
     // load current station
-    const hasSaved = await loadStation(currentStation);
-    if (!hasSaved){
-      await loadInitialExcel();
-    }
+    await loadStation(currentStation);
 
     setLoading(false, "待機中");
   })();
