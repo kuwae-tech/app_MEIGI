@@ -1,9 +1,11 @@
 (() => {
-  const bridge = window.meigiBridge;
-  if (!bridge) {
+  const api = window.api;
+  if (!api) {
     console.warn('[APP] preload bridge not available');
     return;
   }
+  const settingsApi = api.settings;
+  const backupsApi = api.backups;
 
   const TAGS = {
     app: 'APP',
@@ -109,7 +111,7 @@
 
   const updateSettings = async (partial) => {
     settings = deepMerge(settings, partial);
-    settings = await bridge.updateSettings(settings);
+    settings = await settingsApi.update(settings);
     log(TAGS.settings, 'saved', settings);
     scheduleNotifications();
     return settings;
@@ -478,10 +480,10 @@
   const afterSave = async () => {
     const station = getCurrentStation();
     try {
-      await bridge.saveBackup({ station, state: buildBackupSnapshot() });
+      await backupsApi.save({ station, state: buildBackupSnapshot() });
       log(TAGS.backup, `saved station=${station}`);
       const retentionDays = settings.backup.retentionDays || 7;
-      await bridge.cleanupBackups({ retentionDays });
+      await backupsApi.cleanup({ retentionDays });
       log(TAGS.backup, `cleanup retention=${retentionDays}d`);
       await refreshBackupLists();
     } catch (error) {
@@ -507,8 +509,8 @@
   };
 
   const refreshBackupLists = async () => {
-    const list802 = await bridge.listBackups('802');
-    const listCocolo = await bridge.listBackups('COCOLO');
+    const list802 = await backupsApi.list('802');
+    const listCocolo = await backupsApi.list('COCOLO');
     renderBackupList('802', list802);
     renderBackupList('COCOLO', listCocolo);
   };
@@ -545,7 +547,7 @@
       alert('バックアップを選択してください。');
       return;
     }
-    const data = await bridge.readBackup(path);
+    const data = await backupsApi.read(path);
     if (!data?.recordsById) {
       alert('バックアップの読み込みに失敗しました。');
       return;
@@ -598,7 +600,7 @@
     const counts = computeNotifyCounts();
     if (counts.total === 0) return;
     const body = `公演日の近いイベントが ${counts.total}件あります（802: ${counts.byStation['802']} / COCOLO: ${counts.byStation['COCOLO']}）`;
-    await bridge.notify({ title: '名義SPOT管理', body });
+    await api.notify({ title: '名義SPOT管理', body });
     settings = await updateSettings({
       notify: {
         ...settings.notify,
@@ -673,9 +675,22 @@
     }
   };
 
+  const openSettingsModal = () => {
+    $('settingsBackdrop').style.display = 'flex';
+  };
+
   const initSettingsModal = () => {
-    $('settingsBtn')?.addEventListener('click', () => {
-      $('settingsBackdrop').style.display = 'flex';
+    const isSettingsWindow = new URLSearchParams(window.location.search).get('settings') === '1';
+    $('settingsBtn')?.addEventListener('click', async () => {
+      if (isSettingsWindow) {
+        openSettingsModal();
+        return;
+      }
+      if (settingsApi?.open) {
+        await settingsApi.open();
+        return;
+      }
+      openSettingsModal();
     });
     $('settingsCloseBtn')?.addEventListener('click', () => {
       $('settingsBackdrop').style.display = 'none';
@@ -696,6 +711,10 @@
         section.classList.toggle('active', key === tab);
       });
     });
+
+    if (isSettingsWindow) {
+      openSettingsModal();
+    }
   };
 
   const bindSettingsInputs = () => {
@@ -775,16 +794,16 @@
     });
     $('backupCleanupBtn').addEventListener('click', async () => {
       const retentionDays = settings.backup.retentionDays || 7;
-      await bridge.cleanupBackups({ retentionDays });
+      await backupsApi.cleanup({ retentionDays });
       await refreshBackupLists();
     });
 
     $('restoreLatest802').addEventListener('click', async () => {
-      const list = await bridge.listBackups('802');
+      const list = await backupsApi.list('802');
       await restoreBackup(list[0]?.path);
     });
     $('restoreLatestCOCOLO').addEventListener('click', async () => {
-      const list = await bridge.listBackups('COCOLO');
+      const list = await backupsApi.list('COCOLO');
       await restoreBackup(list[0]?.path);
     });
     $('restorePick802').addEventListener('click', async () => {
@@ -870,7 +889,7 @@
   };
 
   const init = async () => {
-    settings = deepMerge(defaultSettings, await bridge.getSettings());
+    settings = deepMerge(defaultSettings, await settingsApi.get());
     populateSettingsUI();
     initSettingsModal();
     bindSettingsInputs();
@@ -887,7 +906,7 @@
     }
 
     await refreshBackupLists();
-    await bridge.cleanupBackups({ retentionDays: settings.backup.retentionDays || 7 });
+    await backupsApi.cleanup({ retentionDays: settings.backup.retentionDays || 7 });
     scheduleNotifications();
     log(TAGS.app, 'integration ready');
   };

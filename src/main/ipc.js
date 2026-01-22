@@ -87,6 +87,11 @@ const cleanupBackups = async (retentionDays) => {
 
 const registerIpc = () => {
   ipcMain.handle('settings:get', () => getSettings());
+  ipcMain.handle('settings:set', (_event, next) => {
+    const merged = deepMerge(defaultSettings, next);
+    store.set('settings', merged);
+    return merged;
+  });
   ipcMain.handle('settings:update', (_event, next) => {
     const merged = deepMerge(getSettings(), next);
     store.set('settings', merged);
