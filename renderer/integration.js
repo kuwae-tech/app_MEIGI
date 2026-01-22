@@ -1,9 +1,5 @@
 (() => {
   const bridge = window.meigiBridge;
-  if (!bridge) {
-    console.warn('[APP] preload bridge not available');
-    return;
-  }
 
   const TAGS = {
     app: 'APP',
@@ -23,6 +19,7 @@
       console.log(`[${tag}] ${message}`);
     }
   };
+  const logSettings = (message, extra) => log('SettingsModal', message, extra);
 
   const defaultSettings = {
     supabaseUrl: '',
@@ -55,6 +52,10 @@
 
   const $ = (id) => document.getElementById(id);
   const onlinePill = () => $('onlinePill');
+  const settingsState = {
+    open: false,
+    lastFocus: null
+  };
 
   let settings = null;
   let supabaseClient = null;
@@ -673,29 +674,108 @@
     }
   };
 
+  const getSettingsElements = () => ({
+    backdrop: $('settingsBackdrop'),
+    closeBtn: $('settingsCloseBtn'),
+    tabs: $('settingsTabs'),
+    sections: {
+      share: $('settingsShare'),
+      notify: $('settingsNotify'),
+      backup: $('settingsBackup')
+    }
+  });
+
+  const getSettingsFocusable = () => {
+    const { backdrop } = getSettingsElements();
+    if (!backdrop) return [];
+    return Array.from(
+      backdrop.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((el) => !el.hasAttribute('disabled') && !el.getAttribute('aria-hidden'));
+  };
+
+  const setSettingsOpen = (open, reason = '') => {
+    const { backdrop, closeBtn } = getSettingsElements();
+    if (!backdrop) return;
+    if (open) {
+      settingsState.lastFocus = document.activeElement;
+      backdrop.style.display = 'flex';
+      backdrop.setAttribute('aria-hidden', 'false');
+      settingsState.open = true;
+      const focusTarget = closeBtn || getSettingsFocusable()[0];
+      if (focusTarget) {
+        requestAnimationFrame(() => focusTarget.focus());
+      }
+      logSettings(`open${reason ? ` (${reason})` : ''}`);
+    } else {
+      backdrop.style.display = 'none';
+      backdrop.setAttribute('aria-hidden', 'true');
+      settingsState.open = false;
+      if (settingsState.lastFocus && typeof settingsState.lastFocus.focus === 'function') {
+        settingsState.lastFocus.focus();
+      }
+      logSettings(`close${reason ? ` (${reason})` : ''}`);
+    }
+  };
+
+  const handleSettingsKeydown = (event) => {
+    if (!settingsState.open) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setSettingsOpen(false, 'esc');
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = getSettingsFocusable();
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   const initSettingsModal = () => {
+    if (initSettingsModal.inited) return;
+    initSettingsModal.inited = true;
+
+    const { backdrop, closeBtn, tabs, sections } = getSettingsElements();
+    if (!backdrop) {
+      logSettings('settings backdrop not found');
+      return;
+    }
+
+    backdrop.setAttribute('aria-hidden', 'true');
+
     $('settingsBtn')?.addEventListener('click', () => {
-      $('settingsBackdrop').style.display = 'flex';
+      setSettingsOpen(true, 'button');
     });
-    $('settingsCloseBtn')?.addEventListener('click', () => {
-      $('settingsBackdrop').style.display = 'none';
+    closeBtn?.addEventListener('click', () => {
+      setSettingsOpen(false, 'close-button');
     });
-    $('settingsBackdrop')?.addEventListener('click', (e) => {
+    backdrop.addEventListener('click', (e) => {
       if (e.target?.id === 'settingsBackdrop') {
-        $('settingsBackdrop').style.display = 'none';
+        setSettingsOpen(false, 'backdrop');
       }
     });
 
-    $('settingsTabs')?.addEventListener('click', (e) => {
+    tabs?.addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-tab]');
       if (!btn) return;
-      $('settingsTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
+      tabs.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
       const tab = btn.dataset.tab;
       ['share', 'notify', 'backup'].forEach((key) => {
-        const section = key === 'share' ? $('settingsShare') : key === 'notify' ? $('settingsNotify') : $('settingsBackup');
-        section.classList.toggle('active', key === tab);
+        sections[key]?.classList.toggle('active', key === tab);
       });
     });
+
+    document.addEventListener('keydown', handleSettingsKeydown);
+    logSettings('init complete');
   };
 
   const bindSettingsInputs = () => {
@@ -890,7 +970,21 @@
     await bridge.cleanupBackups({ retentionDays: settings.backup.retentionDays || 7 });
     scheduleNotifications();
     log(TAGS.app, 'integration ready');
+    log(TAGS.app, '初期化完了');
   };
+
+  if (!bridge) {
+    console.warn('[APP] preload bridge not available');
+    window.addEventListener(
+      'DOMContentLoaded',
+      () => {
+        initSettingsModal();
+        log(TAGS.app, '初期化完了 (bridge未接続)');
+      },
+      { once: true }
+    );
+    return;
+  }
 
   window.addEventListener('DOMContentLoaded', init, { once: true });
 })();
