@@ -1,53 +1,37 @@
 name: build
 
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
   workflow_dispatch:
-
-permissions:
-  contents: read
+  pull_request:
+    branches: [ main, master ]
+  push:
+    branches: [ main, master ]
 
 jobs:
   build:
-    name: build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: 20
 
-      # lockfile が無くても動くように npm install を採用（CIでlockfile自動コミット等はしない）
       - name: Install dependencies
-        shell: bash
-        run: |
-          npm install --no-audit --no-fund
+        run: npm install
 
-      - name: Build (vendors + icons)
-        shell: bash
-        run: |
-          npm run build
+      - name: Build vendors
+        run: npm run build
 
       - name: Build distribution
-        shell: bash
-        run: |
-          npm run dist -- --publish never
+        run: npm run dist -- --publish=never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}
-          path: |
-            dist/**
-          if-no-files-found: error
+          path: dist/**
