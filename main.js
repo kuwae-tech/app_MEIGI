@@ -1,12 +1,14 @@
-// main.js (FULL REPLACE)
-// 名義SPOT管理 - Electron main process (packaged-safe)
-// - Avoid relying on dist/main.js or src/main.js existing inside app.asar
-// - Find an HTML entry and open it
-// - Keep security sane (contextIsolation on / nodeIntegration off)
+// main.js
+// 名義SPOT管理 - Electron main process
+// - Single entry for main/preload/renderer to avoid path drift
+// - Always open settings in renderer modal (no extra windows)
 
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const { registerIpc } = require("./src/main/ipc");
+
+const APP_ID = "com.meigi.spot.kanri";
 
 function firstExisting(paths) {
   for (const p of paths) {
@@ -18,10 +20,10 @@ function firstExisting(paths) {
 }
 
 function createMainWindow() {
+  const appPath = app.getAppPath();
   const preload = firstExisting([
-    path.join(__dirname, "preload.js"),
-    path.join(__dirname, "src", "preload.js"),
-    path.join(__dirname, "dist", "preload.js"),
+    path.join(appPath, "src", "preload", "preload.js"),
+    path.join(appPath, "preload.js"),
   ]);
 
   const win = new BrowserWindow({
@@ -40,18 +42,12 @@ function createMainWindow() {
 
   win.once("ready-to-show", () => win.show());
 
-  // HTML entry candidates (adjust as needed)
   const html = firstExisting([
-    // typical renderer locations
-    path.join(__dirname, "renderer", "index.html"),
-    path.join(__dirname, "renderer", "prototype.html"),
-
-    // if you keep a single HTML at repo root (seen in your tree screenshot)
-    path.join(__dirname, "名義SPOT進捗チェッカー.html"),
-
-    // fallback candidates
-    path.join(__dirname, "dist", "index.html"),
-    path.join(__dirname, "index.html"),
+    path.join(appPath, "renderer", "index.html"),
+    path.join(appPath, "renderer", "prototype.html"),
+    path.join(appPath, "名義SPOT進捗チェッカー.html"),
+    path.join(appPath, "dist", "index.html"),
+    path.join(appPath, "index.html"),
   ]);
 
   if (!html) {
@@ -68,7 +64,7 @@ function createMainWindow() {
         .map((s) => `- ${s}`)
         .join("\n") +
       "\n\n" +
-      `__dirname=${__dirname}\n`;
+      `appPath=${appPath}\n`;
     win.loadURL(
       "data:text/html;charset=utf-8," +
         encodeURIComponent(`<pre style="white-space:pre-wrap">${msg}</pre>`)
@@ -79,7 +75,10 @@ function createMainWindow() {
   win.loadFile(html);
 }
 
+app.setAppUserModelId(APP_ID);
+
 app.whenReady().then(() => {
+  registerIpc();
   createMainWindow();
 
   app.on("activate", () => {

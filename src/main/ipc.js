@@ -85,8 +85,52 @@ const cleanupBackups = async (retentionDays) => {
   }
 };
 
+const dataDir = () => path.join(app.getPath('userData'), 'data');
+const internalExcelPath = () => path.join(dataDir(), 'internal.xlsx');
+const internalExcelBackupPath = () => path.join(dataDir(), 'internal.backup.xlsx');
+
+const readInternalExcel = async () => {
+  const filePath = internalExcelPath();
+  await ensureDir(dataDir());
+  try {
+    const buffer = await fs.readFile(filePath);
+    return { ok: true, buffer, path: filePath, name: path.basename(filePath) };
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return { ok: false, missing: true, path: filePath };
+    }
+    console.error('[DATA] load failed', filePath, error);
+    return { ok: false, error: error?.message || String(error), path: filePath };
+  }
+};
+
+const saveInternalExcel = async (base64, sourceName) => {
+  const filePath = internalExcelPath();
+  await ensureDir(dataDir());
+  try {
+    const buffer = Buffer.from(base64, 'base64');
+    const tmpPath = `${filePath}.tmp`;
+    await fs.writeFile(tmpPath, buffer);
+    await fs.rename(tmpPath, filePath);
+    try {
+      await fs.copyFile(filePath, internalExcelBackupPath());
+    } catch (backupError) {
+      console.warn('[DATA] backup failed', internalExcelBackupPath(), backupError);
+    }
+    return { ok: true, path: filePath, name: sourceName || path.basename(filePath) };
+  } catch (error) {
+    console.error('[DATA] save failed', filePath, error);
+    return { ok: false, error: error?.message || String(error), path: filePath };
+  }
+};
+
 const registerIpc = () => {
   ipcMain.handle('settings:get', () => getSettings());
+  ipcMain.handle('settings:set', (_event, next) => {
+    const merged = deepMerge(getSettings(), next);
+    store.set('settings', merged);
+    return merged;
+  });
   ipcMain.handle('settings:update', (_event, next) => {
     const merged = deepMerge(getSettings(), next);
     store.set('settings', merged);
@@ -127,6 +171,25 @@ const registerIpc = () => {
     new Notification({ title, body }).show();
     return { ok: true };
   });
+
+  ipcMain.handle('data:loadInitial', async () => {
+    const result = await readInternalExcel();
+    if (result.ok) {
+      return {
+        ok: true,
+        name: result.name,
+        path: result.path,
+        base64: result.buffer.toString('base64')
+      };
+    }
+    return result;
+  });
+
+  ipcMain.handle('data:saveExcel', async (_event, { base64, name }) => {
+    return saveInternalExcel(base64, name);
+  });
+
+  console.log('[IPC] registered handlers: settings:get/settings:set/data:*');
 };
 
 module.exports = { registerIpc };

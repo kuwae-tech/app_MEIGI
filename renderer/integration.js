@@ -1,5 +1,5 @@
 (() => {
-  const bridge = window.meigiBridge;
+  const bridge = window.meigi;
   if (!bridge) {
     console.warn('[APP] preload bridge not available');
     return;
@@ -109,7 +109,7 @@
 
   const updateSettings = async (partial) => {
     settings = deepMerge(settings, partial);
-    settings = await bridge.updateSettings(settings);
+    settings = await bridge.settings.set(settings);
     log(TAGS.settings, 'saved', settings);
     scheduleNotifications();
     return settings;
@@ -478,10 +478,10 @@
   const afterSave = async () => {
     const station = getCurrentStation();
     try {
-      await bridge.saveBackup({ station, state: buildBackupSnapshot() });
+      await bridge.backups.save({ station, state: buildBackupSnapshot() });
       log(TAGS.backup, `saved station=${station}`);
       const retentionDays = settings.backup.retentionDays || 7;
-      await bridge.cleanupBackups({ retentionDays });
+      await bridge.backups.cleanup({ retentionDays });
       log(TAGS.backup, `cleanup retention=${retentionDays}d`);
       await refreshBackupLists();
     } catch (error) {
@@ -507,8 +507,8 @@
   };
 
   const refreshBackupLists = async () => {
-    const list802 = await bridge.listBackups('802');
-    const listCocolo = await bridge.listBackups('COCOLO');
+    const list802 = await bridge.backups.list('802');
+    const listCocolo = await bridge.backups.list('COCOLO');
     renderBackupList('802', list802);
     renderBackupList('COCOLO', listCocolo);
   };
@@ -545,7 +545,7 @@
       alert('バックアップを選択してください。');
       return;
     }
-    const data = await bridge.readBackup(path);
+    const data = await bridge.backups.read(path);
     if (!data?.recordsById) {
       alert('バックアップの読み込みに失敗しました。');
       return;
@@ -676,6 +676,7 @@
   const initSettingsModal = () => {
     $('settingsBtn')?.addEventListener('click', () => {
       $('settingsBackdrop').style.display = 'flex';
+      log(TAGS.settings, 'open');
     });
     $('settingsCloseBtn')?.addEventListener('click', () => {
       $('settingsBackdrop').style.display = 'none';
@@ -775,16 +776,16 @@
     });
     $('backupCleanupBtn').addEventListener('click', async () => {
       const retentionDays = settings.backup.retentionDays || 7;
-      await bridge.cleanupBackups({ retentionDays });
+      await bridge.backups.cleanup({ retentionDays });
       await refreshBackupLists();
     });
 
     $('restoreLatest802').addEventListener('click', async () => {
-      const list = await bridge.listBackups('802');
+      const list = await bridge.backups.list('802');
       await restoreBackup(list[0]?.path);
     });
     $('restoreLatestCOCOLO').addEventListener('click', async () => {
-      const list = await bridge.listBackups('COCOLO');
+      const list = await bridge.backups.list('COCOLO');
       await restoreBackup(list[0]?.path);
     });
     $('restorePick802').addEventListener('click', async () => {
@@ -870,7 +871,7 @@
   };
 
   const init = async () => {
-    settings = deepMerge(defaultSettings, await bridge.getSettings());
+    settings = deepMerge(defaultSettings, await bridge.settings.get());
     populateSettingsUI();
     initSettingsModal();
     bindSettingsInputs();
@@ -887,7 +888,7 @@
     }
 
     await refreshBackupLists();
-    await bridge.cleanupBackups({ retentionDays: settings.backup.retentionDays || 7 });
+    await bridge.backups.cleanup({ retentionDays: settings.backup.retentionDays || 7 });
     scheduleNotifications();
     log(TAGS.app, 'integration ready');
   };
