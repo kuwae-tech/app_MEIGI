@@ -1,51 +1,48 @@
 {
   "name": "meigi-spot-kanri",
   "version": "0.1.0",
-  "description": "名義SPOT管理",
+  "description": "名義SPOT管理 (Electron)",
   "main": "main.js",
   "scripts": {
     "dev": "electron .",
-    "build:icons": "npm run gen:icons",
-    "gen:icons": "node scripts/gen-icons.mjs",
-    "build:vendor": "echo \"(vendor build placeholder)\"",
-    "build": "npm run build:icons && node scripts/sync-xlsx.mjs && npm run build:vendor",
-    "dist": "electron-builder --publish never"
+    "build": "node scripts/sync-xlsx.mjs && npm run build:vendor",
+    "build:vendor": "node scripts/build-vendor.mjs",
+    "dist": "electron-builder --publish never",
+    "dist:dir": "electron-builder --dir --publish never"
   },
   "dependencies": {
-    "electron": "^32.0.0",
-    "electron-builder": "^25.0.0",
-    "electron-store": "^10.0.0",
-    "exceljs": "^4.4.0",
-    "pdf-lib": "^1.17.1",
-    "sharp": "^0.33.0",
-    "uuid": "^10.0.0"
+    "googleapis": "^140.0.0"
   },
   "devDependencies": {
-    "electron-icon-builder": "2.0.1"
+    "electron": "^32.1.2",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.0"
   },
   "build": {
-    "appId": "com.kuwae.meigi-spot-kanri",
+    "appId": "jp.kuwae-tech.meigi-spot-kanri",
     "productName": "名義SPOT管理",
-    "files": [
-      "**/*"
-    ],
     "directories": {
-      "buildResources": "assets",
       "output": "dist"
     },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!.github/**"
+    ],
     "mac": {
+      "category": "public.app-category.productivity",
       "target": [
         "dmg",
         "zip"
       ],
-      "icon": "assets/icons/icon.icns"
+      "icon": "assets/icon.icns"
     },
     "win": {
       "target": [
         "nsis",
         "zip"
       ],
-      "icon": "assets/icons/icon.ico"
+      "icon": "assets/icon.ico"
     }
   }
 }
