@@ -11,7 +11,26 @@ const api = {
     read: (path) => ipcRenderer.invoke('backups:read', { path }),
     cleanup: (payload) => ipcRenderer.invoke('backups:cleanup', payload)
   },
-  notify: (payload) => ipcRenderer.invoke('notify', payload)
+  notify: (payload) => ipcRenderer.invoke('notify', payload),
+  app: {
+    quit: () => {
+      try {
+        console.log('[PRELOAD] app.quit called');
+      } catch {
+        // ignore logging errors
+      }
+      ipcRenderer.send('app:quit');
+    },
+    onPrepareQuit: (handler) => {
+      ipcRenderer.on('app:prepare-quit', () => {
+        try {
+          handler?.();
+        } catch (error) {
+          console.error('[PRELOAD] onPrepareQuit handler failed', error);
+        }
+      });
+    }
+  }
 };
 
 contextBridge.exposeInMainWorld('meigi', api);

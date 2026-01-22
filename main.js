@@ -3,12 +3,17 @@
 // - Single entry for main/preload/renderer to avoid path drift
 // - Always open settings in renderer modal (no extra windows)
 
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { registerIpc } = require("./src/main/ipc");
 
 const APP_ID = "com.meigi.spot.kanri";
+const QUIT_FALLBACK_DELAY_MS = 1500;
+
+let mainWindow;
+let isQuitting = false;
+let quitTimer;
 
 function firstExisting(paths) {
   for (const p of paths) {
@@ -18,6 +23,24 @@ function firstExisting(paths) {
   }
   return null;
 }
+
+const requestAppQuit = (source) => {
+  if (isQuitting) {
+    console.log(`[MAIN] quit already in progress (${source})`);
+    return;
+  }
+  isQuitting = true;
+  console.log(`[MAIN] quit requested: ${source}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("app:prepare-quit");
+  }
+  app.quit();
+  clearTimeout(quitTimer);
+  quitTimer = setTimeout(() => {
+    console.warn("[MAIN] fallback app.exit(0)");
+    app.exit(0);
+  }, QUIT_FALLBACK_DELAY_MS);
+};
 
 function createMainWindow() {
   const appPath = app.getAppPath();
@@ -41,6 +64,18 @@ function createMainWindow() {
   });
 
   win.once("ready-to-show", () => win.show());
+  win.on("close", (event) => {
+    console.log("[MAIN] mainWindow close");
+    if (isQuitting) {
+      console.log("[MAIN] mainWindow close: allow (isQuitting)");
+      return;
+    }
+    event.preventDefault();
+    console.log("[MAIN] mainWindow close prevented: initiating quit");
+    requestAppQuit("window-close");
+  });
+
+  mainWindow = win;
 
   const html = firstExisting([
     path.join(appPath, "renderer", "index.html"),
@@ -81,11 +116,28 @@ app.whenReady().then(() => {
   registerIpc();
   createMainWindow();
 
+  ipcMain.on("app:quit", () => {
+    console.log("[MAIN] ipc app:quit");
+    requestAppQuit("ipc");
+  });
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
+
+  console.log("[MAIN] handlers ready: app:quit, window:close, before-quit, will-quit, window-all-closed");
+});
+
+app.on("before-quit", () => {
+  console.log("[MAIN] before-quit");
+  isQuitting = true;
+});
+
+app.on("will-quit", () => {
+  console.log("[MAIN] will-quit");
 });
 
 app.on("window-all-closed", () => {
+  console.log("[MAIN] window-all-closed");
   if (process.platform !== "darwin") app.quit();
 });

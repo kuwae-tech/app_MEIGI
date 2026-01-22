@@ -458,6 +458,24 @@
     .dpDay.isSel{background:#111;color:#fff}
 
     /* Settings modal */
+    .settingsModal{
+      width:min(760px, 100%);
+      height:min(70vh, 640px);
+      max-height:calc(100vh - 32px);
+      display:flex;
+      flex-direction:column;
+      overflow:hidden;
+    }
+    .settingsTabsRow{
+      padding:10px 14px;
+      border-bottom:1px solid var(--border);
+      background:#fbfbfd;
+    }
+    .settingsModal .modalBody{
+      flex:1;
+      overflow:auto;
+      max-height:none;
+    }
     .settingsTabs{display:flex;gap:6px;flex-wrap:wrap}
     .settingsTabs button{border:none;border-radius:10px;padding:6px 10px;background:#f2f2f7;color:var(--sub);font-size:12px;font-weight:700;cursor:pointer}
     .settingsTabs button.active{background:#fff;color:#1d1d1f;box-shadow:0 6px 14px rgba(0,0,0,.08)}
@@ -507,7 +525,7 @@
       </div>
 
     <div class="topActions">
-      <button id="settingsBtn" class="btn btnSecondary">⚙設定</button>
+      <button id="settingsBtn" class="btn btnSecondary">設定</button>
       <button id="undoBtn" class="btn btnGhost" disabled>Undo</button>
       <button id="redoBtn" class="btn btnGhost" disabled>Redo</button>
       <button id="exportBtn" class="btn btnSecondary">書き出し（コピー）</button>
@@ -599,18 +617,19 @@
 </div>
 
 <div class="modalBackdrop" id="settingsBackdrop" style="display:none">
-  <div class="modal" style="max-width:760px">
+  <div class="modal settingsModal">
     <div class="modalHead">
       <div class="modalTitle">設定</div>
       <button class="btn btnGhost" id="settingsCloseBtn">閉じる</button>
     </div>
-    <div class="modalBody">
+    <div class="settingsTabsRow">
       <div class="settingsTabs" id="settingsTabs">
         <button data-tab="share" class="active">共有（Supabase）</button>
         <button data-tab="notify">通知</button>
         <button data-tab="backup">バックアップ/復元</button>
       </div>
-
+    </div>
+    <div class="modalBody">
       <div class="settingsSection active" id="settingsShare">
         <div class="fieldRow">
           <label for="supabaseUrlInput">Project URL</label>
@@ -2989,9 +3008,29 @@ const dz = $("dropZone");
   DIAG.listeners = true;
   diagUpdate();
 
+  let allowUnload = false;
+
+  const allowAppClose = () => {
+    if (!allowUnload){
+      console.log("[UI] close click");
+    }
+    allowUnload = true;
+  };
+
+  if (window.meigi?.app?.onPrepareQuit) {
+    window.meigi.app.onPrepareQuit(() => {
+      allowAppClose();
+    });
+  }
+
+  const requestAppQuit = () => {
+    allowAppClose();
+    window.meigi?.app?.quit?.();
+  };
+
   // Dirty close warning
   window.addEventListener("beforeunload", (e)=>{
-    if (!dirty) return;
+    if (!dirty || allowUnload) return;
     e.preventDefault();
     e.returnValue = "";
   });
