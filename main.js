@@ -4,9 +4,10 @@
 // - Find an HTML entry and open it
 // - Keep security sane (contextIsolation on / nodeIntegration off)
 
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const { registerIpc } = require("./src/main/ipc");
 
 function firstExisting(paths) {
   for (const p of paths) {
@@ -17,12 +18,32 @@ function firstExisting(paths) {
   return null;
 }
 
-function createMainWindow() {
-  const preload = firstExisting([
+let mainWindow = null;
+let settingsWindow = null;
+
+const resolvePreload = () =>
+  firstExisting([
     path.join(__dirname, "preload.js"),
-    path.join(__dirname, "src", "preload.js"),
+    path.join(__dirname, "src", "preload", "preload.js"),
     path.join(__dirname, "dist", "preload.js"),
   ]);
+
+const resolveHtml = () =>
+  firstExisting([
+    // typical renderer locations
+    path.join(__dirname, "renderer", "index.html"),
+    path.join(__dirname, "renderer", "prototype.html"),
+
+    // if you keep a single HTML at repo root (seen in your tree screenshot)
+    path.join(__dirname, "名義SPOT進捗チェッカー.html"),
+
+    // fallback candidates
+    path.join(__dirname, "dist", "index.html"),
+    path.join(__dirname, "index.html"),
+  ]);
+
+function createMainWindow() {
+  const preload = resolvePreload();
 
   const win = new BrowserWindow({
     width: 1200,
@@ -39,20 +60,10 @@ function createMainWindow() {
   });
 
   win.once("ready-to-show", () => win.show());
+  mainWindow = win;
 
   // HTML entry candidates (adjust as needed)
-  const html = firstExisting([
-    // typical renderer locations
-    path.join(__dirname, "renderer", "index.html"),
-    path.join(__dirname, "renderer", "prototype.html"),
-
-    // if you keep a single HTML at repo root (seen in your tree screenshot)
-    path.join(__dirname, "名義SPOT進捗チェッカー.html"),
-
-    // fallback candidates
-    path.join(__dirname, "dist", "index.html"),
-    path.join(__dirname, "index.html"),
-  ]);
+  const html = resolveHtml();
 
   if (!html) {
     const msg =
@@ -80,11 +91,49 @@ function createMainWindow() {
 }
 
 app.whenReady().then(() => {
+  const preload = resolvePreload();
+  console.log("[APP] preload path", preload || "not found");
+  registerIpc();
+  console.log("[APP] ipc handlers registered");
   createMainWindow();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
+});
+
+ipcMain.handle("settings:open", async () => {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
+    return { ok: true };
+  }
+  const preload = resolvePreload();
+  const html = resolveHtml();
+  if (!html) {
+    return { ok: false, reason: "settings html not found" };
+  }
+  settingsWindow = new BrowserWindow({
+    width: 900,
+    height: 700,
+    minWidth: 800,
+    minHeight: 600,
+    parent: mainWindow || undefined,
+    modal: !!mainWindow,
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      preload: preload || undefined,
+    },
+  });
+  settingsWindow.once("ready-to-show", () => settingsWindow.show());
+  settingsWindow.on("closed", () => {
+    settingsWindow = null;
+  });
+  settingsWindow.loadFile(html, { query: { settings: "1" } });
+  console.log("[APP] settings window opened");
+  return { ok: true };
 });
 
 app.on("window-all-closed", () => {
