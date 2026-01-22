@@ -1,29 +1,92 @@
-// main.js (CommonJS wrapper)
-// - electron-builder が package.json の main=main.js を参照しても確実に存在するようにする
-// - 実体は dist/main.js または src/main.js を優先して読み込む
-const fs = require("fs");
+// main.js (FULL REPLACE)
+// 名義SPOT管理 - Electron main process (packaged-safe)
+// - Avoid relying on dist/main.js or src/main.js existing inside app.asar
+// - Find an HTML entry and open it
+// - Keep security sane (contextIsolation on / nodeIntegration off)
+
+const { app, BrowserWindow } = require("electron");
 const path = require("path");
-const { pathToFileURL } = require("url");
+const fs = require("fs");
 
-const candidates = [
-  path.join(__dirname, "dist", "main.js"),
-  path.join(__dirname, "src", "main.js"),
-];
-
-const target = candidates.find((p) => fs.existsSync(p));
-
-if (!target) {
-  // ここで落ちるなら「ビルドでdist/main.jsが生成されていない」か「src/main.jsが存在しない」
-  // つまり、エントリの組み立てが壊れているので分かりやすく止める
-  throw new Error(
-    `[main.js] Could not find entry. Tried:\n- ${candidates.join("\n- ")}`
-  );
+function firstExisting(paths) {
+  for (const p of paths) {
+    try {
+      if (p && fs.existsSync(p)) return p;
+    } catch (_) {}
+  }
+  return null;
 }
 
-// import() は CJS でも使える（ESM/CJSどちらの実体にも寄せられる）
-(async () => {
-  await import(pathToFileURL(target).href);
-})().catch((e) => {
-  console.error("[main.js] FATAL:", e);
-  process.exit(1);
+function createMainWindow() {
+  const preload = firstExisting([
+    path.join(__dirname, "preload.js"),
+    path.join(__dirname, "src", "preload.js"),
+    path.join(__dirname, "dist", "preload.js"),
+  ]);
+
+  const win = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    minWidth: 1000,
+    minHeight: 700,
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      preload: preload || undefined,
+    },
+  });
+
+  win.once("ready-to-show", () => win.show());
+
+  // HTML entry candidates (adjust as needed)
+  const html = firstExisting([
+    // typical renderer locations
+    path.join(__dirname, "renderer", "index.html"),
+    path.join(__dirname, "renderer", "prototype.html"),
+
+    // if you keep a single HTML at repo root (seen in your tree screenshot)
+    path.join(__dirname, "名義SPOT進捗チェッカー.html"),
+
+    // fallback candidates
+    path.join(__dirname, "dist", "index.html"),
+    path.join(__dirname, "index.html"),
+  ]);
+
+  if (!html) {
+    const msg =
+      "App entry HTML was not found inside the packaged app.\n\n" +
+      "Tried:\n" +
+      [
+        "renderer/index.html",
+        "renderer/prototype.html",
+        "名義SPOT進捗チェッカー.html",
+        "dist/index.html",
+        "index.html",
+      ]
+        .map((s) => `- ${s}`)
+        .join("\n") +
+      "\n\n" +
+      `__dirname=${__dirname}\n`;
+    win.loadURL(
+      "data:text/html;charset=utf-8," +
+        encodeURIComponent(`<pre style="white-space:pre-wrap">${msg}</pre>`)
+    );
+    return;
+  }
+
+  win.loadFile(html);
+}
+
+app.whenReady().then(() => {
+  createMainWindow();
+
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+  });
+});
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
 });
