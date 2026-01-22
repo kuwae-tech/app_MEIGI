@@ -6,12 +6,14 @@ on:
   pull_request:
   workflow_dispatch:
 
+# electron-builder が publish 判定で token を要求するケースがあるため、
+# GITHUB_TOKEN を使えるように permissions を明示（Artifactsのみ運用でも害なし）
+permissions:
+  contents: write
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  NODE_VERSION: "20"
 
 jobs:
   build:
@@ -22,77 +24,62 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
 
+    env:
+      CI: true
+      # electron-builder が token を要求するケース対策（publishはしないが要求だけされる事がある）
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Detect lockfile presence
-        id: lock
-        shell: bash
-        run: |
-          if [ -f package-lock.json ]; then
-            echo "has_lockfile=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_lockfile=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # IMPORTANT: actions/setup-node cache-dependency-path が解決できないと Windows が即死するため分岐
-      - name: Setup Node (with cache)
-        if: steps.lock.outputs.has_lockfile == 'true'
+      # lockfile があるときだけ cache-dependency-path を有効化（Windows即死を避ける）
+      - name: Setup Node (with cache when lockfile exists)
+        if: ${{ hashFiles('package-lock.json') != '' }}
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 20
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Setup Node (no cache)
-        if: steps.lock.outputs.has_lockfile != 'true'
+      - name: Setup Node (no cache when lockfile missing)
+        if: ${{ hashFiles('package-lock.json') == '' }}
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 20
 
       - name: Show versions
-        shell: bash
         run: |
           node -v
           npm -v
 
       - name: Ensure lockfile exists
-        if: steps.lock.outputs.has_lockfile != 'true'
-        shell: bash
-        run: |
-          echo "::error::package-lock.json is missing. Please generate and commit package-lock.json (recommended), then re-run."
-          exit 1
+        run: node -e "const fs=require('fs'); if(!fs.existsSync('package-lock.json')){ console.error('ERROR: package-lock.json is missing. Commit a lockfile to enable deterministic builds (npm ci).'); process.exit(1);} console.log('OK: package-lock.json exists');"
 
-      - name: Install dependencies (deterministic, include dev)
-        shell: bash
-        run: |
-          npm ci --include=dev
+      # devDependencies も含めて入れる（sync-xlsx / build-vendor 等が dev に居ると死ぬのを防ぐ）
+      - name: Install dependencies (deterministic)
+        run: npm ci --include=dev
 
-      - name: "Sanity check - xlsx must resolve"
-        shell: bash
-        run: |
-          node -e "console.log('xlsx resolved to:', require.resolve('xlsx'))"
+      - name: Sanity check - xlsx must resolve
+        run: node -e "console.log('xlsx resolved to:', require.resolve('xlsx'))"
 
-      - name: "Normalize xlsx bundle path for sync script (if needed)"
-        shell: bash
-        run: |
-          node scripts/sync-xlsx.mjs
+      # renderer/vendor/xlsx.full.min.js を用意（CDN依存回避）
+      - name: Sync xlsx vendor bundle
+        run: node scripts/sync-xlsx.mjs
 
-      - name: "Build (pre-dist)"
-        shell: bash
-        run: |
-          npm run build
+      - name: Build (pre-dist)
+        run: npm run build
 
-      - name: "Build distribution"
-        shell: bash
-        run: |
-          npm run dist -- --publish never
+      # publish は絶対しない（Artifacts のみ）
+      - name: Build distribution (no publish)
+        run: npm run dist -- --publish never
+
+      - name: Debug dist outputs
+        run: node -e "const fs=require('fs'); const p='dist'; console.log('dist exists:', fs.existsSync(p)); if(fs.existsSync(p)){ console.log('dist entries:', fs.readdirSync(p)); }"
 
       - name: Upload artifacts (dist)
         uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}
-          path: |
-            dist/**
+          name: app_MEIGI-${{ matrix.os }}-dist
+          path: dist/**
           if-no-files-found: warn
