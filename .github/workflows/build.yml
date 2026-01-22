@@ -1,13 +1,10 @@
 name: Build
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
   workflow_dispatch:
+  push:
+    branches: [ "main" ]
 
-# electron-builder が publish 判定で token を要求するケースがあるため、
-# GITHUB_TOKEN を使えるように permissions を明示（Artifactsのみ運用でも害なし）
 permissions:
   contents: write
 
@@ -16,37 +13,151 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prepare:
+    name: "prepare (ensure deps + lockfile)"
+    runs-on: ubuntu-latest
+    outputs:
+      prepared_ref: ${{ steps.out.outputs.prepared_ref }}
+      ready: ${{ steps.out.outputs.ready }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Show versions
+        run: |
+          node -v
+          npm -v
+
+      - name: Ensure xlsx dependency exists in package.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = 'package.json';
+          const j = JSON.parse(fs.readFileSync(p,'utf8'));
+          const deps = j.dependencies || {};
+          if (!deps.xlsx) {
+            console.log('[prepare] xlsx missing in dependencies. Will add via npm.');
+            process.exit(10);
+          }
+          console.log('[prepare] xlsx already present:', deps.xlsx);
+          NODE
+          code=$?
+          if [ "$code" -eq 10 ]; then
+            npm install --save-exact xlsx
+          elif [ "$code" -ne 0 ]; then
+            exit "$code"
+          fi
+
+      - name: Ensure lockfile exists & is consistent (npm install if needed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f package-lock.json ]; then
+            echo "[prepare] package-lock.json missing -> generating with npm install"
+            npm install
+          else
+            echo "[prepare] package-lock.json exists -> verifying via npm ci"
+            if npm ci --include=dev; then
+              echo "[prepare] npm ci OK"
+            else
+              echo "[prepare] npm ci failed -> repairing lockfile via npm install"
+              npm install
+            fi
+          fi
+
+      - name: Commit & push if lockfile/package.json changed
+        id: commit
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git status --porcelain
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "[prepare] no changes to commit"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "new_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add package.json package-lock.json || true
+          git commit -m "chore(ci): ensure lockfile & deps [skip ci]" || true
+          git push origin HEAD:main
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "new_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Output prepared ref
+        id: out
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.commit.outputs.changed }}" = "true" ]; then
+            echo "prepared_ref=${{ steps.commit.outputs.new_sha }}" >> "$GITHUB_OUTPUT"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Lockfile/deps were updated and pushed to main. A new workflow run will start automatically. This run will stop here."
+            exit 1
+          else
+            echo "prepared_ref=${{ steps.commit.outputs.new_sha }}" >> "$GITHUB_OUTPUT"
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
-    name: build (${{ matrix.os }})
+    name: "build (${{ matrix.os }})"
+    needs: [ prepare ]
+    if: needs.prepare.outputs.ready == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [ macos-latest, windows-latest ]
 
     env:
-      CI: true
-      # electron-builder が token を要求するケース対策（publishはしないが要求だけされる事がある）
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Checkout
+      - name: Checkout (prepared sha)
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.prepared_ref }}
+          fetch-depth: 0
 
-      # lockfile があるときだけ cache-dependency-path を有効化（Windows即死を避ける）
-      - name: Setup Node (with cache when lockfile exists)
-        if: ${{ hashFiles('package-lock.json') != '' }}
+      - name: Detect lockfile presence
+        id: lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ]; then
+            echo "has_lockfile=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_lockfile=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node (with cache)
+        if: steps.lock.outputs.has_lockfile == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: package-lock.json
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "package-lock.json"
 
-      - name: Setup Node (no cache when lockfile missing)
-        if: ${{ hashFiles('package-lock.json') == '' }}
+      - name: Setup Node (no cache)
+        if: steps.lock.outputs.has_lockfile != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "20"
 
       - name: Show versions
         run: |
@@ -54,32 +165,55 @@ jobs:
           npm -v
 
       - name: Ensure lockfile exists
-        run: node -e "const fs=require('fs'); if(!fs.existsSync('package-lock.json')){ console.error('ERROR: package-lock.json is missing. Commit a lockfile to enable deterministic builds (npm ci).'); process.exit(1);} console.log('OK: package-lock.json exists');"
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f package-lock.json ]; then
+            echo "ERROR: package-lock.json is missing."
+            exit 1
+          fi
 
-      # devDependencies も含めて入れる（sync-xlsx / build-vendor 等が dev に居ると死ぬのを防ぐ）
-      - name: Install dependencies (deterministic)
+      - name: Install dependencies (deterministic, include dev)
         run: npm ci --include=dev
 
-      - name: Sanity check - xlsx must resolve
+      - name: "Sanity check - xlsx must resolve"
         run: node -e "console.log('xlsx resolved to:', require.resolve('xlsx'))"
 
-      # renderer/vendor/xlsx.full.min.js を用意（CDN依存回避）
-      - name: Sync xlsx vendor bundle
-        run: node scripts/sync-xlsx.mjs
+      - name: "Normalize xlsx bundle path for sync script (if needed)"
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f scripts/sync-xlsx.mjs ]; then
+            node scripts/sync-xlsx.mjs
+          else
+            echo "[warn] scripts/sync-xlsx.mjs not found; skipping"
+          fi
 
       - name: Build (pre-dist)
         run: npm run build
 
-      # publish は絶対しない（Artifacts のみ）
       - name: Build distribution (no publish)
-        run: npm run dist -- --publish never
+        shell: bash
+        run: |
+          set -euo pipefail
+          # In case package.json scripts don't include --publish never, force it here.
+          npm run dist -- --publish never
 
-      - name: Debug dist outputs
-        run: node -e "const fs=require('fs'); const p='dist'; console.log('dist exists:', fs.existsSync(p)); if(fs.existsSync(p)){ console.log('dist entries:', fs.readdirSync(p)); }"
+      - name: List dist
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la
+          if [ -d dist ]; then
+            echo "[dist]"
+            ls -la dist
+          else
+            echo "[warn] dist directory not found"
+          fi
 
       - name: Upload artifacts (dist)
         uses: actions/upload-artifact@v4
         with:
-          name: app_MEIGI-${{ matrix.os }}-dist
+          name: dist-${{ matrix.os }}
           path: dist/**
           if-no-files-found: warn
