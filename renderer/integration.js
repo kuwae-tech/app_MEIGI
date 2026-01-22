@@ -109,7 +109,7 @@
 
   const updateSettings = async (partial) => {
     settings = deepMerge(settings, partial);
-    settings = await bridge.updateSettings(settings);
+    settings = await bridge.setSettings(settings);
     log(TAGS.settings, 'saved', settings);
     scheduleNotifications();
     return settings;
@@ -676,13 +676,16 @@
   const initSettingsModal = () => {
     $('settingsBtn')?.addEventListener('click', () => {
       $('settingsBackdrop').style.display = 'flex';
+      console.log('[SettingsModal] open');
     });
     $('settingsCloseBtn')?.addEventListener('click', () => {
       $('settingsBackdrop').style.display = 'none';
+      console.log('[SettingsModal] close');
     });
     $('settingsBackdrop')?.addEventListener('click', (e) => {
       if (e.target?.id === 'settingsBackdrop') {
         $('settingsBackdrop').style.display = 'none';
+        console.log('[SettingsModal] close');
       }
     });
 
@@ -870,7 +873,14 @@
   };
 
   const init = async () => {
-    settings = deepMerge(defaultSettings, await bridge.getSettings());
+    try {
+      const stored = await bridge.getSettings();
+      settings = deepMerge(defaultSettings, stored);
+      console.log('[SettingsModal] settings load ok');
+    } catch (error) {
+      settings = deepMerge(defaultSettings, {});
+      console.warn('[SettingsModal] settings load fallback', error);
+    }
     populateSettingsUI();
     initSettingsModal();
     bindSettingsInputs();

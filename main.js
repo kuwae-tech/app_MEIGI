@@ -7,6 +7,7 @@
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const { registerIpc } = require("./src/main/ipc");
 
 function firstExisting(paths) {
   for (const p of paths) {
@@ -80,6 +81,7 @@ function createMainWindow() {
 }
 
 app.whenReady().then(() => {
+  registerIpc();
   createMainWindow();
 
   app.on("activate", () => {
