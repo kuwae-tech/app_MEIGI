@@ -153,7 +153,7 @@ jobs:
       - name: Install dependencies (deterministic, include dev)
         run: npm ci --include=dev --no-audit --no-fund
 
-      - name: Sanity check: xlsx must resolve
+      - name: "Sanity check - xlsx must resolve"
         shell: bash
         run: |
           node -e "console.log('xlsx resolved to:', require.resolve('xlsx'))"
