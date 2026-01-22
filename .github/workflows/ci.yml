@@ -41,7 +41,6 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Generate/repair lockfile when npm ci fails
-        id: gen_lock
         if: steps.try_ci.outcome != 'success'
         run: |
           echo "npm ci failed; generating/repairing package-lock.json..."
@@ -49,16 +48,17 @@ jobs:
           npm install --package-lock-only --no-audit --no-fund
           test -f package-lock.json
 
-      - name: Determine lockfile change
+      - name: Determine lockfile change (include untracked)
         id: diff_lock
+        shell: bash
         run: |
-          if git diff --quiet -- package-lock.json; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
+          status="$(git status --porcelain -- package-lock.json || true)"
+          if [ -n "$status" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # PR かつ同一リポジトリの head の場合のみ push する（権限問題回避）
       - name: Commit and push lockfile (PR only, when changed)
         if: steps.diff_lock.outputs.changed == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         run: |
@@ -70,6 +70,7 @@ jobs:
 
       - name: Output ref for build
         id: out
+        shell: bash
         run: |
           echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "lockfile_changed=${{ steps.diff_lock.outputs.changed }}" >> "$GITHUB_OUTPUT"
@@ -93,12 +94,29 @@ jobs:
           ref: ${{ needs.ensure-lockfile.outputs.ref }}
           fetch-depth: 0
 
+      - name: Detect lockfile presence
+        id: lf
+        shell: bash
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup Node (with cache)
+        if: steps.lf.outputs.exists == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: package-lock.json
+
+      - name: Setup Node (no cache)
+        if: steps.lf.outputs.exists != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
       - name: Show versions
         run: |
@@ -109,7 +127,7 @@ jobs:
         shell: bash
         run: |
           if [ ! -f package-lock.json ]; then
-            echo "ERROR: package-lock.json is missing." >&2
+            echo "ERROR: package-lock.json is missing. ensure-lockfile should have generated/committed it for PRs." >&2
             exit 1
           fi
 
