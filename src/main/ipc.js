@@ -49,6 +49,60 @@ const ensureDir = async (dir) => {
 };
 
 const backupDir = (station) => path.join(app.getPath('userData'), 'backups', station);
+const INTERNAL_EXCEL_DEFAULT = 'meigi-spot-latest.xlsx';
+const INTERNAL_EXCEL_CANDIDATES = [
+  'event.xlsx',
+  'event.xls',
+  'meigi-spot.xlsx',
+  'meigi-spot.xls',
+  'meigi.xlsx',
+  'meigi.xls',
+  INTERNAL_EXCEL_DEFAULT,
+  path.join('excel', 'latest.xlsx')
+];
+
+const statFile = async (filePath) => {
+  try {
+    const stat = await fs.stat(filePath);
+    return { exists: true, size: stat.size, mtimeMs: stat.mtimeMs };
+  } catch {
+    return { exists: false, size: null, mtimeMs: null };
+  }
+};
+
+const findExistingInternalExcel = async () => {
+  const baseDir = app.getPath('userData');
+  for (const name of INTERNAL_EXCEL_CANDIDATES) {
+    const filePath = path.isAbsolute(name) ? name : path.join(baseDir, name);
+    const stat = await statFile(filePath);
+    if (stat.exists) {
+      return { path: filePath, stat };
+    }
+  }
+
+  try {
+    const entries = await fs.readdir(baseDir, { withFileTypes: true });
+    const excelFiles = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const ext = path.extname(entry.name).toLowerCase();
+      if (ext !== '.xlsx' && ext !== '.xls') continue;
+      const filePath = path.join(baseDir, entry.name);
+      const stat = await fs.stat(filePath);
+      excelFiles.push({ path: filePath, stat });
+    }
+    excelFiles.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+    return excelFiles[0] || null;
+  } catch {
+    return null;
+  }
+};
+
+const resolveInternalExcelPath = async () => {
+  const existing = await findExistingInternalExcel();
+  if (existing?.path) return existing.path;
+  return path.join(app.getPath('userData'), INTERNAL_EXCEL_DEFAULT);
+};
 
 const parseBackupFiles = async (station) => {
   const dir = backupDir(station);
@@ -118,6 +172,32 @@ const registerIpc = () => {
   ipcMain.handle('backups:cleanup', async (_event, { retentionDays }) => {
     await cleanupBackups(retentionDays);
     return { ok: true };
+  });
+
+  ipcMain.handle('excel:read-internal', async () => {
+    const existing = await findExistingInternalExcel();
+    const fallbackPath = await resolveInternalExcelPath();
+    const targetPath = existing?.path || fallbackPath;
+    const stat = existing?.stat || (await statFile(targetPath));
+    if (!stat.exists) {
+      return { path: targetPath, exists: false, size: stat.size, mtimeMs: stat.mtimeMs };
+    }
+    const data = await fs.readFile(targetPath);
+    return { path: targetPath, exists: true, size: stat.size, mtimeMs: stat.mtimeMs, data };
+  });
+
+  ipcMain.handle('excel:save-internal', async (_event, { buffer }) => {
+    if (!buffer) {
+      throw new Error('No buffer provided');
+    }
+    const targetPath = await resolveInternalExcelPath();
+    await ensureDir(path.dirname(targetPath));
+    const payload = Buffer.isBuffer(buffer) ? buffer : Buffer.from(new Uint8Array(buffer));
+    const tmpPath = `${targetPath}.tmp`;
+    await fs.writeFile(tmpPath, payload);
+    await fs.rename(tmpPath, targetPath);
+    const stat = await fs.stat(targetPath);
+    return { path: targetPath, size: stat.size, mtimeMs: stat.mtimeMs };
   });
 
   ipcMain.handle('notify', (_event, { title, body }) => {

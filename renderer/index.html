@@ -124,6 +124,8 @@
     .meta{display:flex;align-items:center;gap:10px;color:var(--sub);font-size:11.5px;flex-wrap:wrap}
     .fileName{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:360px}
     .statusLine{display:flex;align-items:center;gap:8px}
+    .statusLine.ok{color:#1b7f3c}
+    .statusLine.ng{color:#b42318}
     .spinner{width:12px;height:12px;border-radius:999px;border:2px solid rgba(0,0,0,.12);border-top-color:rgba(10,132,255,.9);animation:spin .85s linear infinite;display:none}
     .statusLine.loading .spinner{display:inline-block}
     @keyframes spin{to{transform:rotate(360deg)}}
@@ -221,6 +223,11 @@
     .modalTitle{font-size:13px;font-weight:820;color:#1d1d1f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .modalBody{padding:14px;display:flex;flex-direction:column;gap:12px;max-height:min(70vh, 620px);overflow:auto}
     .modalFoot{padding:12px 14px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border);background:#fbfbfd}
+    .settingsModal{width:min(760px, 100%);height:min(640px, 90vh);display:flex;flex-direction:column}
+    .settingsModal .modalHead{flex-direction:column;align-items:stretch;gap:10px}
+    .settingsModal .modalBody{flex:1;max-height:none;overflow:auto}
+    .settingsModal .modalFoot{flex:0 0 auto}
+    .settingsHeadTop{display:flex;align-items:center;justify-content:space-between;gap:12px}
 
     .field{display:flex;flex-direction:column;gap:6px;min-width:0}
     .label{font-size:11.5px;color:var(--sub)}
@@ -507,7 +514,7 @@
       </div>
 
     <div class="topActions">
-      <button id="settingsBtn" class="btn btnSecondary">⚙設定</button>
+      <button id="settingsBtn" class="btn btnSecondary">設定</button>
       <button id="undoBtn" class="btn btnGhost" disabled>Undo</button>
       <button id="redoBtn" class="btn btnGhost" disabled>Redo</button>
       <button id="exportBtn" class="btn btnSecondary">書き出し（コピー）</button>
@@ -599,18 +606,19 @@
 </div>
 
 <div class="modalBackdrop" id="settingsBackdrop" style="display:none">
-  <div class="modal" style="max-width:760px">
+  <div class="modal settingsModal">
     <div class="modalHead">
-      <div class="modalTitle">設定</div>
-      <button class="btn btnGhost" id="settingsCloseBtn">閉じる</button>
-    </div>
-    <div class="modalBody">
+      <div class="settingsHeadTop">
+        <div class="modalTitle">設定</div>
+        <button class="btn btnGhost" id="settingsCloseBtn">閉じる</button>
+      </div>
       <div class="settingsTabs" id="settingsTabs">
         <button data-tab="share" class="active">共有（Supabase）</button>
         <button data-tab="notify">通知</button>
         <button data-tab="backup">バックアップ/復元</button>
       </div>
-
+    </div>
+    <div class="modalBody">
       <div class="settingsSection active" id="settingsShare">
         <div class="fieldRow">
           <label for="supabaseUrlInput">Project URL</label>
@@ -1699,9 +1707,16 @@ function daysUntilKey(k){
   }
 
   // ====== Excel Import ======
-  function setLoading(on, text){
+  function setLoading(on){
     $("statusLine").classList.toggle("loading", !!on);
-    $("statusText").textContent = text || (on ? "処理中…" : "待機中");
+  }
+
+  function setStatus(kind, text){
+    const line = $("statusLine");
+    if (!line) return;
+    line.classList.remove("ok", "ng");
+    if (kind) line.classList.add(kind);
+    $("statusText").textContent = text;
   }
 
   function showBanner(kind, msg){
@@ -1741,6 +1756,21 @@ function daysUntilKey(k){
     const ws = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(ws, { defval:"" });
     return rows;
+  }
+
+  function ensureArrayBuffer(data){
+    if (data instanceof ArrayBuffer) return data;
+    if (ArrayBuffer.isView(data)){
+      return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    }
+    return data;
+  }
+
+  function formatBytes(size){
+    if (size == null) return "";
+    if (size < 1024) return `${size}B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)}KB`;
+    return `${(size / (1024 * 1024)).toFixed(2)}MB`;
   }
 
   function parseRecordFromRow(row){
@@ -1847,34 +1877,50 @@ function daysUntilKey(k){
     return updated;
   }
 
-  async function importExcelFile(file){
-    diagNoteEvent("import-start");
+  async function importExcelBuffer({ buffer, name, source, markDirtyOnSuccess = true, saveInternal = false }){
+    diagNoteEvent(`import-${source || "unknown"}`);
     DIAG.xlsx = !!window.XLSX;
     diagUpdate();
 
     if (!window.XLSX){
-      showBanner("ng","Excel解析ライブラリの読み込みに失敗しました（通信環境をご確認ください）。");
-      return;
+      const msg = "Excel解析ライブラリの読み込みに失敗しました（通信環境をご確認ください）。";
+      showBanner("ng", msg);
+      setStatus("ng", `読み込み失敗: ${msg}`);
+      return false;
     }
 
-    setLoading(true, "読み込み中…");
+    setLoading(true);
+    setStatus(null, "読み込み中…");
     hideBanner();
     showNotices([]);
-    $("fileName").textContent = file.name;
+    $("fileName").textContent = name || "内部保存Excel";
 
     try{
-      const buf = await file.arrayBuffer();
+      const buf = ensureArrayBuffer(buffer);
       const wb = XLSX.read(buf, { type:"array", cellDates:true });
+      if (!wb.SheetNames || wb.SheetNames.length === 0){
+        throw new Error("読み込めるシートが見つかりません。");
+      }
 
       const notices = [];
       let newCount=0, updCount=0, statusUpd=0, statusRejected=0;
 
       const mainSheet = wb.SheetNames.includes("製作状況") ? "製作状況" : getSheetByNameOrFirst(wb,"製作状況");
+      if (!mainSheet){
+        throw new Error("シート名を特定できませんでした。");
+      }
       if (mainSheet !== "製作状況"){
         notices.push(`※注意: 「製作状況」シートが無かったため「${mainSheet}」を読み取りました。`);
       }
 
       const rowsMain = readRows(wb, mainSheet);
+      if (!rowsMain.length){
+        throw new Error("シートにデータがありません。");
+      }
+      const hasId = rowsMain.some((row) => normalizeText(row["ID"]));
+      if (!hasId){
+        throw new Error("必須列「ID」が見つかりません。");
+      }
 
       let endedSheetName = null;
       if (wb.SheetNames.includes("公演終了")) endedSheetName = "公演終了";
@@ -1922,15 +1968,93 @@ function daysUntilKey(k){
 
       const msg = `取り込み完了：新規 ${newCount} / 更新 ${updCount}`;
       showBanner("ok", msg);
-      setLoading(false, "完了");
-      markDirty(true);
-      // 注意欄は表示しない（要望により廃止）
+      setLoading(false);
+      setStatus("ok", "読み込み成功");
+      if (markDirtyOnSuccess) markDirty(true);
+      console.info(`[excel] parsed source=${source || "unknown"} sheet=${mainSheet} new=${newCount} updated=${updCount} statusUpdate=${statusUpd} statusRejected=${statusRejected}`);
+      if (saveInternal){
+        try{
+          const saved = await window.meigiBridge?.saveInternalExcel?.({ name, buffer: buf });
+          if (saved?.path){
+            console.info(`[excel] internal saved path=${saved.path} size=${saved.size} mtime=${saved.mtimeMs}`);
+          }
+        }catch(e){
+          console.warn("internal excel save failed", e);
+        }
+      }
 
+      // 注意欄は表示しない（要望により廃止）
       render();
+      return true;
     } catch(e){
       console.error(e);
-      showBanner("ng", (e && e.message) ? e.message : String(e));
-      setLoading(false, "失敗");
+      const reason = (e && e.message) ? e.message : String(e);
+      showBanner("ng", reason);
+      setLoading(false);
+      setStatus("ng", `読み込み失敗: ${reason}`);
+      return false;
+    }
+  }
+
+  async function importExcelFile(file){
+    try{
+      const buf = await file.arrayBuffer();
+      await importExcelBuffer({
+        buffer: buf,
+        name: file.name,
+        source: "file",
+        markDirtyOnSuccess: true,
+        saveInternal: true
+      });
+    } catch(e){
+      console.error(e);
+      const reason = (e && e.message) ? e.message : String(e);
+      showBanner("ng", reason);
+      setStatus("ng", `読み込み失敗: ${reason}`);
+    }
+  }
+
+  async function loadInternalExcelOnBoot(){
+    const bridge = window.meigiBridge;
+    if (!bridge || !bridge.readInternalExcel){
+      const msg = "内部Excelの読み込みAPIが見つかりません。";
+      console.warn(msg);
+      showBanner("ng", msg);
+      setStatus("ng", `読み込み失敗: ${msg}`);
+      return false;
+    }
+
+    setLoading(true);
+    setStatus(null, "内部保存Excel読み込み中…");
+
+    try{
+      const info = await bridge.readInternalExcel();
+      const mtime = info?.mtimeMs ? new Date(info.mtimeMs).toLocaleString("ja-JP") : "n/a";
+      const sizeLabel = info?.size != null ? `${info.size} (${formatBytes(info.size)})` : "n/a";
+      console.info(`[internal-excel] path=${info?.path || "unknown"} exists=${!!info?.exists} size=${sizeLabel} mtime=${mtime}`);
+      if (!info || !info.exists){
+        const msg = "内部に保存されたExcelが見つかりません。";
+        showBanner("ng", msg);
+        setLoading(false);
+        setStatus("ng", `読み込み失敗: ${msg}`);
+        return false;
+      }
+      const name = info.name || (info.path ? info.path.split(/[\\/]/).pop() : "内部保存Excel");
+      const ok = await importExcelBuffer({
+        buffer: info.data,
+        name,
+        source: "internal",
+        markDirtyOnSuccess: false,
+        saveInternal: false
+      });
+      return ok;
+    } catch(e){
+      console.error(e);
+      const reason = (e && e.message) ? e.message : String(e);
+      showBanner("ng", reason);
+      setLoading(false);
+      setStatus("ng", `読み込み失敗: ${reason}`);
+      return false;
     }
   }
 
@@ -2995,10 +3119,12 @@ const dz = $("dropZone");
       });
     }
 
+    setStatus(null, "待機中");
+    setLoading(false);
+
     // load current station
     await loadStation(currentStation);
-
-    setLoading(false, "待機中");
+    await loadInternalExcelOnBoot();
   })();
 </script>
 <script src="./integration.js"></script>
