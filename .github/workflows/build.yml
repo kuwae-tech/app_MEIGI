@@ -1,177 +1,91 @@
-name: build
+name: Build
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-      - "codex/**"
-      - "chore/**"
-      - "fix/**"
+    branches: [ main ]
   pull_request:
+  workflow_dispatch:
 
-permissions:
-  contents: write
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
 
 jobs:
-  prepare:
-    name: prepare (ensure deps + lockfile)
-    runs-on: ubuntu-latest
-    outputs:
-      prepared_sha: ${{ steps.out.outputs.prepared_sha }}
-      has_patch: ${{ steps.out.outputs.has_patch }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Show versions
-        run: |
-          node -v
-          npm -v
-          git --version
-
-      - name: Ensure required dependencies exist in package.json (xlsx, electron-store)
-        run: |
-          node <<'NODE'
-          const fs = require('fs');
-          const path = 'package.json';
-          const raw = fs.readFileSync(path, 'utf8');
-          const pkg = JSON.parse(raw);
-
-          pkg.dependencies ||= {};
-
-          // 必須（CI/ビルドが暗黙に依存しているもの）
-          if (!pkg.dependencies['xlsx']) pkg.dependencies['xlsx'] = '^0.18.5';
-          if (!pkg.dependencies['electron-store']) pkg.dependencies['electron-store'] = '^8.1.0';
-
-          // 念のため scripts が無い場合でも壊さない
-          pkg.scripts ||= {};
-
-          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
-          console.log('[prepare] ensured deps: xlsx, electron-store');
-          NODE
-
-      - name: Generate/repair package-lock.json (package-lock-only)
-        run: |
-          npm install --package-lock-only --no-audit --no-fund --ignore-scripts
-
-      - name: Create patch if changes exist (PR safety)
-        if: github.event_name == 'pull_request'
-        run: |
-          git status --porcelain
-          if [ -n "$(git status --porcelain)" ]; then
-            git diff > prepared.patch
-            echo "[prepare] created prepared.patch"
-          else
-            echo "[prepare] no changes"
-          fi
-
-      - name: Upload patch (only when created)
-        if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: prepared-patch
-          path: prepared.patch
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Commit & push fixes (push / workflow_dispatch only)
-        if: github.event_name != 'pull_request'
-        run: |
-          if [ -n "$(git status --porcelain)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add package.json package-lock.json
-            git commit -m "chore(ci): ensure xlsx dependency and lockfile"
-            git push
-            echo "[prepare] pushed fixes to branch"
-          else
-            echo "[prepare] no changes to commit"
-          fi
-
-      - name: Output prepared sha
-        id: out
-        run: |
-          echo "prepared_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ -f prepared.patch ] && [ -s prepared.patch ]; then
-            echo "has_patch=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_patch=false" >> "$GITHUB_OUTPUT"
-          fi
-
   build:
     name: build (${{ matrix.os }})
-    needs: prepare
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout (prepared sha)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.prepared_sha }}
-          fetch-depth: 0
 
-      - name: Download patch (PR only)
-        if: needs.prepare.outputs.has_patch == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: prepared-patch
-          path: .
-
-      - name: Apply patch (PR only)
-        if: needs.prepare.outputs.has_patch == 'true'
+      - name: Detect lockfile presence
+        id: lock
         shell: bash
         run: |
-          ls -la
-          if [ -f prepared.patch ] && [ -s prepared.patch ]; then
-            git apply prepared.patch
-            echo "[build] applied prepared.patch"
+          if [ -f package-lock.json ]; then
+            echo "has_lockfile=true" >> "$GITHUB_OUTPUT"
           else
-            echo "[build] prepared.patch not found or empty"
+            echo "has_lockfile=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Setup Node
+      # IMPORTANT: actions/setup-node cache-dependency-path が解決できないと Windows が即死するため分岐
+      - name: Setup Node (with cache)
+        if: steps.lock.outputs.has_lockfile == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Node (no cache)
+        if: steps.lock.outputs.has_lockfile != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Show versions
+        shell: bash
         run: |
           node -v
           npm -v
 
       - name: Ensure lockfile exists
+        if: steps.lock.outputs.has_lockfile != 'true'
         shell: bash
         run: |
-          if [ ! -f package-lock.json ]; then
-            echo "ERROR: package-lock.json is missing."
-            exit 1
-          fi
+          echo "::error::package-lock.json is missing. Please generate and commit package-lock.json (recommended), then re-run."
+          exit 1
 
       - name: Install dependencies (deterministic, include dev)
+        shell: bash
         run: |
-          npm ci --include=dev --no-audit --no-fund
+          npm ci --include=dev
 
-      - name: Sanity check - xlsx must resolve
+      - name: "Sanity check - xlsx must resolve"
+        shell: bash
         run: |
           node -e "console.log('xlsx resolved to:', require.resolve('xlsx'))"
 
-      - name: Build (pre-dist)
+      - name: "Normalize xlsx bundle path for sync script (if needed)"
+        shell: bash
+        run: |
+          node scripts/sync-xlsx.mjs
+
+      - name: "Build (pre-dist)"
+        shell: bash
         run: |
           npm run build
 
-      - name: Build distribution
+      - name: "Build distribution"
+        shell: bash
         run: |
           npm run dist -- --publish never
 
@@ -182,4 +96,3 @@ jobs:
           path: |
             dist/**
           if-no-files-found: warn
-          retention-days: 7
