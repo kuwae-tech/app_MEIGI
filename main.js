@@ -20,6 +20,7 @@ function firstExisting(paths) {
 function createMainWindow() {
   const preload = firstExisting([
     path.join(__dirname, "preload.js"),
+    path.join(__dirname, "src", "preload", "preload.js"),
     path.join(__dirname, "src", "preload.js"),
     path.join(__dirname, "dist", "preload.js"),
   ]);
