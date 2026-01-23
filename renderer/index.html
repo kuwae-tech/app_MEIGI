@@ -32,6 +32,8 @@
       --status-dark-bg:rgba(60,60,67,.10);
       --status-gray-bg:rgba(142,142,147,.10);
       --status-text:#1d1d1f;
+      --date-alert-red-bg:rgba(255,59,48,.10);
+      --date-alert-yellow-bg:rgba(255,204,0,.16);
       --radius:16px;
       --radiusSm:12px;
       --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Arial,"Hiragino Sans","Noto Sans JP",sans-serif;
@@ -310,8 +312,8 @@
     .tableWrap{-webkit-overflow-scrolling:touch}
 
     /* Date alerts */
-    .dateAlertRed{background:rgba(255,59,48,.10)}
-    .dateAlertYellow{background:rgba(255,204,0,.16)}
+    .dateAlertRed{background:var(--date-alert-red-bg)}
+    .dateAlertYellow{background:var(--date-alert-yellow-bg)}
 
     /* Status popover (inline picker) */
     .statusPopover{
@@ -2687,6 +2689,14 @@ function daysUntilKey(k){
     };
   }
 
+  function getDateHighlightMap(){
+    const rootStyle = getComputedStyle(document.documentElement);
+    return {
+      red: rootStyle.getPropertyValue("--date-alert-red-bg").trim(),
+      yellow: rootStyle.getPropertyValue("--date-alert-yellow-bg").trim()
+    };
+  }
+
   function cssColorToARGB(color){
     if (!color) return null;
     const s = color.trim();
@@ -2743,6 +2753,9 @@ function daysUntilKey(k){
     }
     const statusColorMap = getStatusColorMap();
     const statusRowKeys = view.map((rec)=> statusColorKeyForStatus(rec.status));
+    const dateHighlightMap = getDateHighlightMap();
+    const dateHighlightLevels = view.map((rec)=> dateAlertLevel(rec));
+    const highlightedCount = dateHighlightLevels.filter(Boolean).length;
     const payload = {
       title: "名義SPOT管理 出力",
       meta: getExportMetaInfo(view),
@@ -2750,9 +2763,13 @@ function daysUntilKey(k){
       columnKeys: columns.map((c)=> c.key),
       rows: buildExportRows(view, columns),
       statusColorMap,
-      statusRowKeys
+      statusRowKeys,
+      dateHighlightMap,
+      dateHighlightLevels
     };
     console.log("[EXPORT] pdf statusColor enabled");
+    console.log("[EXPORT] dateHighlight enabled threshold=1m/2m");
+    console.log(`[EXPORT] highlighted rows/cells count=${highlightedCount}`);
     const result = await window.meigi.export.pdf(payload);
     if (result?.canceled) return;
     if (result?.ok){
@@ -2772,8 +2789,12 @@ function daysUntilKey(k){
       alert("Excel書き出しはアプリ版で利用できます。");
       return;
     }
-    const styleEngine = window.meigi?.xlsxStyle || window.XLSX;
-    const styleEngineName = window.meigi?.xlsxStyle ? "xlsx-js-style" : "xlsx";
+    const styleEngine = window.meigi?.xlsxStyle;
+    if (!styleEngine){
+      alert("Excel書き出しのスタイルエンジンが読み込めませんでした。");
+      return;
+    }
+    const styleEngineName = "xlsx-js-style";
     const meta = getExportMetaInfo(view);
     const metaRows = [
       ["ステーション", meta.station],
@@ -2785,7 +2806,11 @@ function daysUntilKey(k){
     const headerRowIndex = metaRows.length + 1;
     const tableRows = buildExportRows(view, columns);
     const statusColorMap = getStatusColorMap();
+    const dateHighlightMap = getDateHighlightMap();
+    const dateHighlightLevels = view.map((rec)=> dateAlertLevel(rec));
+    const highlightedCount = dateHighlightLevels.filter(Boolean).length;
     const statusColIndex = columns.findIndex((c)=> c.key === "status");
+    const dateColIndex = columns.findIndex((c)=> c.key === "dateText");
     const aoa = [
       ...metaRows,
       columns.map((c)=> c.label),
@@ -2826,14 +2851,14 @@ function daysUntilKey(k){
       const cellAddress = styleEngine.utils.encode_cell({ c, r: headerRow });
       applyCellStyle(ws[cellAddress], {
         font: { bold: true },
-        alignment: { wrapText: true, vertical: "center" }
+        alignment: { wrapText: true, vertical: "center", horizontal: "left" }
       });
     }
     for (let r = 0; r < tableRows.length; r += 1){
       const rowIndex = headerRowIndex + r;
       for (let c = 0; c < columns.length; c += 1){
         const cellAddress = styleEngine.utils.encode_cell({ c, r: rowIndex });
-        const style = { alignment: { wrapText: true, vertical: "top" } };
+        const style = { alignment: { wrapText: true, vertical: "top", horizontal: "left" } };
         if (c === statusColIndex){
           const statusKey = statusColorKeyForStatus(view[r]?.status);
           const color = statusColorMap[statusKey];
@@ -2844,6 +2869,14 @@ function daysUntilKey(k){
           }
           if (fontColor){
             style.font = { ...(style.font || {}), color: { rgb: fontColor } };
+          }
+        }
+        if (c === dateColIndex){
+          const level = dateHighlightLevels[r];
+          const dateColor = level ? dateHighlightMap[level] : null;
+          const fillColor = cssColorToARGB(dateColor);
+          if (fillColor){
+            style.fill = { patternType: "solid", fgColor: { rgb: fillColor } };
           }
         }
         applyCellStyle(ws[cellAddress], style);
@@ -2868,7 +2901,9 @@ function daysUntilKey(k){
       return { hpt: 30 };
     });
     ws["!rows"] = rowHeights;
-    console.log(`[EXPORT] excel styleEngine=${styleEngineName} wrap=true`);
+    console.log(`[EXPORT] excel engine=${styleEngineName} styles=on`);
+    console.log("[EXPORT] dateHighlight enabled threshold=1m/2m");
+    console.log(`[EXPORT] highlighted rows/cells count=${highlightedCount}`);
     console.log(`[EXPORT] excel colWidth min=${minWidth} max=${maxWidth} rowsWrap=true`);
     const wb = styleEngine.utils.book_new();
     styleEngine.utils.book_append_sheet(wb, ws, "list");

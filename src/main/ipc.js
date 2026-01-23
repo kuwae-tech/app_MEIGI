@@ -69,9 +69,10 @@ const escapeHtml = (value) => String(value ?? '')
   .replaceAll('"', '&quot;')
   .replaceAll("'", '&#39;');
 
-const buildExportHtml = ({ title, meta, columns, rows, columnKeys, statusColorMap, statusRowKeys }) => {
+const buildExportHtml = ({ title, meta, columns, rows, columnKeys, statusColorMap, statusRowKeys, dateHighlightMap, dateHighlightLevels }) => {
   const headerCells = columns.map((label) => `<th>${escapeHtml(label)}</th>`).join('');
   const statusColIndex = Array.isArray(columnKeys) ? columnKeys.indexOf('status') : -1;
+  const dateColIndex = Array.isArray(columnKeys) ? columnKeys.indexOf('dateText') : -1;
   const statusStyles = statusColorMap && typeof statusColorMap === 'object'
     ? Object.entries(statusColorMap).map(([key, value]) => {
       if (!value?.bg) return '';
@@ -79,11 +80,24 @@ const buildExportHtml = ({ title, meta, columns, rows, columnKeys, statusColorMa
       return `.status-cell-${key}{background:${value.bg};${text}}`;
     }).join('\n')
     : '';
+  const dateStyles = dateHighlightMap && typeof dateHighlightMap === 'object'
+    ? Object.entries(dateHighlightMap).map(([key, value]) => {
+      if (!value) return '';
+      return `.date-highlight-${key}{background:${value};}`;
+    }).join('\n')
+    : '';
   const bodyRows = rows.map((row, rowIndex) => {
     const statusKey = Array.isArray(statusRowKeys) ? statusRowKeys[rowIndex] : null;
+    const dateLevel = Array.isArray(dateHighlightLevels) ? dateHighlightLevels[rowIndex] : null;
     const cells = row.map((cell, colIndex) => {
-      const isStatus = colIndex === statusColIndex && statusKey;
-      const className = isStatus ? ` class="status-cell status-cell-${escapeHtml(statusKey)}"` : '';
+      const classNames = [];
+      if (colIndex === statusColIndex && statusKey){
+        classNames.push('status-cell', `status-cell-${statusKey}`);
+      }
+      if (colIndex === dateColIndex && dateLevel){
+        classNames.push('date-highlight', `date-highlight-${dateLevel}`);
+      }
+      const className = classNames.length ? ` class="${classNames.map(escapeHtml).join(' ')}"` : '';
       return `<td${className}>${escapeHtml(cell)}</td>`;
     }).join('');
     return `<tr>${cells}</tr>`;
@@ -141,6 +155,10 @@ const buildExportHtml = ({ title, meta, columns, rows, columnKeys, statusColorMa
       font-weight: 600;
     }
     ${statusStyles}
+    .date-highlight {
+      font-weight: 600;
+    }
+    ${dateStyles}
     thead { display: table-header-group; }
     thead th {
       background: #f3f3f3;
