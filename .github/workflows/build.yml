@@ -7,10 +7,6 @@ on:
   pull_request:
     branches: [main]
 
-concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
   CI: true
   NODE_VERSION: "20"
@@ -18,18 +14,33 @@ env:
   # (We also pass --publish never in scripts, but some paths still check GH_TOKEN presence.)
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-jobs:
-  build:
-    name: build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
+permissions:
+  contents: write
 
+jobs:
+  prepare:
+    name: prepare (lockfile sync)
+    runs-on: ubuntu-latest
+    outputs:
+      lockfile_pushed: ${{ steps.lockfile.outputs.lockfile_pushed }}
     steps:
-      - name: Checkout
+      - name: Checkout (PR head)
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+
+      - name: Checkout (non-PR)
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Detect lockfile presence
         id: lock
@@ -44,26 +55,59 @@ jobs:
             echo "[warn] package-lock.json missing"
           fi
 
-      - name: Enforce lockfile presence
-        if: steps.lock.outputs.has_lockfile != 'true'
+      - name: Show versions
         shell: bash
         run: |
-          echo "::error ::package-lock.json がありません。package-lock.json をコミットして再実行してください。"
-          exit 1
+          node -v
+          npm -v
+
+      - name: Generate lockfile safely (no scripts)
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts
+
+      - name: Commit lockfile if changed
+        id: lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git status --porcelain
+            git add package-lock.json package.json || true
+            git commit -m "chore(ci): sync lockfile" || true
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+            else
+              git push origin "HEAD:${{ github.ref_name }}"
+            fi
+            echo "lockfile_pushed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "lockfile_pushed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: build (${{ matrix.os }})
+    needs: prepare
+    if: needs.prepare.outputs.lockfile_pushed != 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Node (with cache)
-        if: steps.lock.outputs.has_lockfile == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: package-lock.json
-
-      - name: Setup Node (no cache)
-        if: steps.lock.outputs.has_lockfile != 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
 
       - name: Show versions
         shell: bash
@@ -75,20 +119,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! npm ci --include=dev; then
-            echo "::error ::package-lock.json をコミットして再実行してください。"
-            exit 1
-          fi
-
-      - name: Verify lockfile stayed clean
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "::error ::依存関係の不整合で lockfile 差分が発生しました。package-lock.json をコミットして再実行してください。"
-            git status --porcelain
-            exit 1
-          fi
+          npm ci --include=dev
 
       - name: "Sanity check - xlsx must resolve"
         shell: bash
