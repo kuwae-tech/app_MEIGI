@@ -69,10 +69,23 @@ const escapeHtml = (value) => String(value ?? '')
   .replaceAll('"', '&quot;')
   .replaceAll("'", '&#39;');
 
-const buildExportHtml = ({ title, meta, columns, rows }) => {
+const buildExportHtml = ({ title, meta, columns, rows, columnKeys, statusColorMap, statusRowKeys }) => {
   const headerCells = columns.map((label) => `<th>${escapeHtml(label)}</th>`).join('');
-  const bodyRows = rows.map((row) => {
-    const cells = row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('');
+  const statusColIndex = Array.isArray(columnKeys) ? columnKeys.indexOf('status') : -1;
+  const statusStyles = statusColorMap && typeof statusColorMap === 'object'
+    ? Object.entries(statusColorMap).map(([key, value]) => {
+      if (!value?.bg) return '';
+      const text = value.text ? `color: ${value.text};` : '';
+      return `.status-cell-${key}{background:${value.bg};${text}}`;
+    }).join('\n')
+    : '';
+  const bodyRows = rows.map((row, rowIndex) => {
+    const statusKey = Array.isArray(statusRowKeys) ? statusRowKeys[rowIndex] : null;
+    const cells = row.map((cell, colIndex) => {
+      const isStatus = colIndex === statusColIndex && statusKey;
+      const className = isStatus ? ` class="status-cell status-cell-${escapeHtml(statusKey)}"` : '';
+      return `<td${className}>${escapeHtml(cell)}</td>`;
+    }).join('');
     return `<tr>${cells}</tr>`;
   }).join('');
   const metaLines = [];
@@ -124,6 +137,10 @@ const buildExportHtml = ({ title, meta, columns, rows }) => {
       word-break: break-word;
       word-wrap: break-word;
     }
+    .status-cell {
+      font-weight: 600;
+    }
+    ${statusStyles}
     thead { display: table-header-group; }
     thead th {
       background: #f3f3f3;
