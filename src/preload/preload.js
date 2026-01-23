@@ -5,6 +5,10 @@ const api = {
     get: () => ipcRenderer.invoke('settings:get'),
     set: (next) => ipcRenderer.invoke('settings:set', next)
   },
+  logs: {
+    get: () => ipcRenderer.invoke('logs:get'),
+    set: (next) => ipcRenderer.invoke('logs:set', next)
+  },
   backups: {
     save: (payload) => ipcRenderer.invoke('backups:save', payload),
     list: (station) => ipcRenderer.invoke('backups:list', { station }),

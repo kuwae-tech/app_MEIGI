@@ -24,7 +24,8 @@ const defaultSettings = {
 const store = new Store({
   name: 'meigi-spot-settings',
   defaults: {
-    settings: defaultSettings
+    settings: defaultSettings,
+    logs: []
   }
 });
 
@@ -42,6 +43,17 @@ const deepMerge = (base, next) => {
 const getSettings = () => {
   const stored = store.get('settings');
   return deepMerge(defaultSettings, stored);
+};
+
+const getLogs = () => {
+  const stored = store.get('logs');
+  return Array.isArray(stored) ? stored : [];
+};
+
+const setLogs = (next) => {
+  const logs = Array.isArray(next) ? next : [];
+  store.set('logs', logs);
+  return logs;
 };
 
 const ensureDir = async (dir) => {
@@ -164,6 +176,8 @@ const registerIpc = () => {
     store.set('settings', merged);
     return merged;
   });
+  ipcMain.handle('logs:get', () => getLogs());
+  ipcMain.handle('logs:set', (_event, next) => setLogs(next));
 
   ipcMain.handle('backups:save', async (_event, { station, state }) => {
     const dir = backupDir(station);
