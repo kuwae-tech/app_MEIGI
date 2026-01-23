@@ -1,5 +1,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+let xlsxStyle = null;
+try {
+  xlsxStyle = require('xlsx-js-style');
+  console.log('[PRELOAD] XLSX_STYLE loaded keys=', Object.keys(xlsxStyle || {}).length);
+} catch (error) {
+  console.warn('[PRELOAD] XLSX_STYLE load failed', error?.message || error, error);
+}
+
 const api = {
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
@@ -20,6 +28,8 @@ const api = {
     excel: (payload) => ipcRenderer.invoke('export:excel', payload)
   },
   notify: (payload) => ipcRenderer.invoke('notify', payload),
+  xlsxStyle,
+  XLSX_STYLE: xlsxStyle,
   app: {
     quit: () => {
       try {
@@ -57,6 +67,7 @@ const api = {
 };
 
 contextBridge.exposeInMainWorld('meigi', api);
+contextBridge.exposeInMainWorld('XLSX_STYLE', xlsxStyle);
 
 try {
   console.log('[PRELOAD] exposed:', Object.keys(api));
