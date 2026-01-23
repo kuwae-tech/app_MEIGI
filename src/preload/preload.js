@@ -25,9 +25,6 @@ const api = {
       }
       ipcRenderer.send('app:quit');
     },
-    cancelQuit: () => {
-      ipcRenderer.send('app:cancel-quit');
-    },
     onPrepareQuit: (handler) => {
       ipcRenderer.on('app:prepare-quit', () => {
         try {

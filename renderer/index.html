@@ -750,13 +750,32 @@
     </div>
     <div class="modalBody" style="padding:14px 18px 16px 18px">
       <div class="muted" style="line-height:1.6">
-        保存されていない変更があります。このままウィンドウを閉じますか？
+        ステーションを切り替える前に、変更内容を保存しますか？
       </div>
     </div>
     <div class="modalFoot" style="padding:12px 18px 18px 18px;display:flex;gap:10px;justify-content:flex-end">
       <button class="btn btnGhost" id="stationSwitchCancelBtn">キャンセル</button>
-      <button class="btn btnGhost" id="stationSwitchNoSaveBtn">保存せず閉じる</button>
-      <button class="btn btnPrimary" id="stationSwitchSaveBtn">保存して閉じる</button>
+      <button class="btn btnGhost" id="stationSwitchNoSaveBtn">保存せず切り替え</button>
+      <button class="btn btnPrimary" id="stationSwitchSaveBtn">保存して切り替え</button>
+    </div>
+  </div>
+</div>
+
+<!-- Close Confirm Dialog -->
+<div class="modalBackdrop" id="closeConfirmBackdrop" style="display:none">
+  <div class="modalShell" role="dialog" aria-modal="true" aria-labelledby="closeConfirmTitle" style="max-width:520px">
+    <div class="modalHead" style="padding:16px 18px 10px 18px">
+      <div class="modalTitle" id="closeConfirmTitle">未保存の変更があります</div>
+    </div>
+    <div class="modalBody" style="padding:14px 18px 16px 18px">
+      <div class="muted" style="line-height:1.6">
+        保存されていない変更があります。このままウィンドウを閉じますか？
+      </div>
+    </div>
+    <div class="modalFoot" style="padding:12px 18px 18px 18px;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn btnGhost" id="closeConfirmCancelBtn">キャンセル</button>
+      <button class="btn btnGhost" id="closeConfirmNoSaveBtn">保存せず閉じる</button>
+      <button class="btn btnPrimary" id="closeConfirmSaveBtn">保存して閉じる</button>
     </div>
   </div>
 </div>
@@ -818,7 +837,39 @@
         closeStationSwitchDialog("cancel");
       }
     });
+    $("closeConfirmCancelBtn")?.addEventListener("click", ()=>closeCloseConfirmDialog("cancel"));
+    $("closeConfirmNoSaveBtn")?.addEventListener("click", ()=>closeCloseConfirmDialog("nosave"));
+    $("closeConfirmSaveBtn")?.addEventListener("click", ()=>closeCloseConfirmDialog("save"));
+    $("closeConfirmBackdrop")?.addEventListener("click", (e)=>{
+      if (e.target && e.target.id === "closeConfirmBackdrop"){
+        closeCloseConfirmDialog("cancel");
+      }
+    });
   });
+
+  // ====== Close confirm dialog ======
+  const closeConfirmBackdrop = () => $("closeConfirmBackdrop");
+  let _closeConfirmResolver = null;
+
+  function openCloseConfirmDialog(){
+    return new Promise((resolve)=>{
+      _closeConfirmResolver = resolve;
+      const bd = closeConfirmBackdrop();
+      if (!bd) return resolve("cancel");
+      bd.style.display = "flex";
+      setTimeout(()=>{$("closeConfirmSaveBtn")?.focus?.();}, 0);
+    });
+  }
+
+  function closeCloseConfirmDialog(choice){
+    const bd = closeConfirmBackdrop();
+    if (bd) bd.style.display = "none";
+    if (_closeConfirmResolver){
+      const r = _closeConfirmResolver;
+      _closeConfirmResolver = null;
+      r(choice);
+    }
+  }
 
 
   // ====== Diagnostics (no-ops safe) ======
@@ -3056,48 +3107,35 @@ const dz = $("dropZone");
     allowUnload = true;
   };
 
-  const logCloseDecision = (choice, isDirty) => {
-    console.log(`[UI] close click dirty=${isDirty} choice=${choice}`);
-  };
-
-  const handleAppCloseRequest = async () => {
+  const requestCloseFromUI = async () => {
     const isDirty = !!dirty;
+    console.log(`[UI] close click dirty=${isDirty}`);
     if (!isDirty) {
-      logCloseDecision("continue", isDirty);
+      console.log("[UI] close dialog choice=continue");
       allowAppClose();
       window.meigi?.app?.quit?.();
       return;
     }
 
-    const choice = await openStationSwitchDialog();
-    if (choice === "cancel") {
-      logCloseDecision("cancel", isDirty);
-      window.meigi?.app?.cancelQuit?.();
-      return;
-    }
+    const choice = await openCloseConfirmDialog();
+    console.log(`[UI] close dialog choice=${choice}`);
+    if (choice === "cancel") return;
     if (choice === "save") {
       const ok = await saveNow({ showToast: false });
       if (!ok) {
-        logCloseDecision("cancel", isDirty);
-        window.meigi?.app?.cancelQuit?.();
+        console.log("[UI] close dialog choice=cancel");
         return;
       }
     }
-
-    logCloseDecision("continue", isDirty);
     allowAppClose();
     window.meigi?.app?.quit?.();
   };
 
   if (window.meigi?.app?.onPrepareQuit) {
     window.meigi.app.onPrepareQuit(() => {
-      handleAppCloseRequest();
+      requestCloseFromUI();
     });
   }
-
-  const requestAppQuit = () => {
-    handleAppCloseRequest();
-  };
 
   // Dirty close warning
   window.addEventListener("beforeunload", (e)=>{

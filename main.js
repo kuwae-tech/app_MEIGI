@@ -14,7 +14,6 @@ const QUIT_FALLBACK_DELAY_MS = 1500;
 let mainWindow;
 let isQuitting = false;
 let quitTimer;
-let quitPending = false;
 
 function firstExisting(paths) {
   for (const p of paths) {
@@ -30,28 +29,23 @@ const requestAppQuit = (source) => {
     console.log(`[MAIN] quit already in progress (${source})`);
     return;
   }
-  console.log(`[MAIN] quit requested: ${source}`);
   if (source === "window-close") {
-    if (quitPending) {
-      console.log("[MAIN] quit already pending (window-close)");
-      return;
-    }
-    quitPending = true;
+    console.log("[MAIN] quit requested: window-close");
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("app:prepare-quit");
     }
     return;
   }
-
-  quitPending = false;
   isQuitting = true;
-  if (source !== "ipc" && mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("app:prepare-quit");
+  if (source === "ipc") {
+    console.log("[MAIN] app:quit received; isQuitting=true");
+  } else {
+    console.log(`[MAIN] quit requested: ${source}`);
   }
   app.quit();
   clearTimeout(quitTimer);
   quitTimer = setTimeout(() => {
-    console.warn("[MAIN] fallback app.exit(0)");
+    console.warn("[MAIN] fallback app.exit(0) after timeout");
     app.exit(0);
   }, QUIT_FALLBACK_DELAY_MS);
 };
@@ -131,13 +125,7 @@ app.whenReady().then(() => {
   createMainWindow();
 
   ipcMain.on("app:quit", () => {
-    console.log("[MAIN] ipc app:quit");
     requestAppQuit("ipc");
-  });
-  ipcMain.on("app:cancel-quit", () => {
-    console.log("[MAIN] ipc app:cancel-quit");
-    quitPending = false;
-    isQuitting = false;
   });
 
   app.on("activate", () => {
