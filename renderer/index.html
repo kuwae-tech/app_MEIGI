@@ -3177,33 +3177,47 @@ const dz = $("dropZone");
     allowUnload = true;
   };
 
-  const requestCloseFromUI = async () => {
+  const sendCloseDecision = (decision) => {
+    console.log(`[UI] request-close decision=${decision}`);
+    window.meigi?.app?.sendRequestCloseResult?.({ decision });
+  };
+
+  const handleRequestClose = async (source) => {
     const isDirty = !!dirty;
-    console.log(`[UI] close click dirty=${isDirty}`);
+    console.log(`[UI] request-close received dirty=${isDirty}`);
     if (!isDirty) {
-      console.log("[UI] close dialog choice=continue");
       allowAppClose();
-      window.meigi?.app?.quit?.();
+      sendCloseDecision("close_no_save");
       return;
     }
 
     const choice = await openCloseConfirmDialog();
-    console.log(`[UI] close dialog choice=${choice}`);
-    if (choice === "cancel") return;
+    if (choice === "cancel") {
+      sendCloseDecision("cancel");
+      return;
+    }
     if (choice === "save") {
       const ok = await saveNow({ showToast: false });
       if (!ok) {
-        console.log("[UI] close dialog choice=cancel");
+        sendCloseDecision("cancel");
         return;
       }
+      allowAppClose();
+      sendCloseDecision("close_after_save");
+      return;
     }
     allowAppClose();
-    window.meigi?.app?.quit?.();
+    sendCloseDecision("close_no_save");
   };
 
   if (window.meigi?.app?.onPrepareQuit) {
     window.meigi.app.onPrepareQuit(() => {
-      requestCloseFromUI();
+      handleRequestClose("window-close");
+    });
+  }
+  if (window.meigi?.app?.onRequestClose) {
+    window.meigi.app.onRequestClose((payload) => {
+      handleRequestClose(payload?.source || "window-close");
     });
   }
 

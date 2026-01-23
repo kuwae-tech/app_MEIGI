@@ -3,7 +3,7 @@
 // - Single entry for main/preload/renderer to avoid path drift
 // - Always open settings in renderer modal (no extra windows)
 
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { registerIpc } = require("./src/main/ipc");
@@ -13,7 +13,12 @@ const QUIT_FALLBACK_DELAY_MS = 1500;
 
 let mainWindow;
 let isQuitting = false;
+let closeFlowInProgress = false;
+let closeFlowFallbackActive = false;
 let quitTimer;
+let closeFlowTimer;
+
+const CLOSE_REQUEST_TIMEOUT_MS = 1500;
 
 function firstExisting(paths) {
   for (const p of paths) {
@@ -24,19 +29,14 @@ function firstExisting(paths) {
   return null;
 }
 
-const requestAppQuit = (source) => {
+const finalizeQuit = (source) => {
   if (isQuitting) {
     console.log(`[MAIN] quit already in progress (${source})`);
     return;
   }
-  if (source === "window-close") {
-    console.log("[MAIN] quit requested: window-close");
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("app:prepare-quit");
-    }
-    return;
-  }
   isQuitting = true;
+  closeFlowInProgress = false;
+  clearTimeout(closeFlowTimer);
   if (source === "ipc") {
     console.log("[MAIN] app:quit received; isQuitting=true");
   } else {
@@ -48,6 +48,49 @@ const requestAppQuit = (source) => {
     console.warn("[MAIN] fallback app.exit(0) after timeout");
     app.exit(0);
   }, QUIT_FALLBACK_DELAY_MS);
+};
+
+const showFallbackCloseDialog = async () => {
+  console.warn("[CLOSE] fallback dialog used");
+  closeFlowFallbackActive = true;
+  try {
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      title: "未保存の変更があります",
+      message: "未保存の変更があります。保存せずに閉じますか？",
+      buttons: ["キャンセル", "保存せず閉じる"],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    if (result.response === 1) {
+      finalizeQuit("fallback");
+    } else {
+      closeFlowInProgress = false;
+    }
+  } catch (error) {
+    console.error("[CLOSE] fallback dialog failed", error);
+    finalizeQuit("fallback-error");
+  } finally {
+    clearTimeout(closeFlowTimer);
+    closeFlowFallbackActive = false;
+  }
+};
+
+const startCloseFlow = (source) => {
+  if (closeFlowInProgress) return;
+  closeFlowInProgress = true;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("app:request-close", { source });
+    console.log("[CLOSE] request-close sent");
+  } else {
+    showFallbackCloseDialog();
+    return;
+  }
+  clearTimeout(closeFlowTimer);
+  closeFlowTimer = setTimeout(() => {
+    if (!closeFlowInProgress) return;
+    showFallbackCloseDialog();
+  }, CLOSE_REQUEST_TIMEOUT_MS);
 };
 
 function createMainWindow() {
@@ -73,14 +116,17 @@ function createMainWindow() {
 
   win.once("ready-to-show", () => win.show());
   win.on("close", (event) => {
-    console.log("[MAIN] mainWindow close");
+    console.log(`[CLOSE] onClose source=window-close isQuitting=${isQuitting} inProgress=${closeFlowInProgress}`);
     if (isQuitting) {
       console.log("[MAIN] mainWindow close: allow (isQuitting)");
       return;
     }
+    if (closeFlowInProgress) {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
-    console.log("[MAIN] mainWindow close prevented: initiating quit");
-    requestAppQuit("window-close");
+    startCloseFlow("window-close");
   });
 
   mainWindow = win;
@@ -125,7 +171,24 @@ app.whenReady().then(() => {
   createMainWindow();
 
   ipcMain.on("app:quit", () => {
-    requestAppQuit("ipc");
+    finalizeQuit("ipc");
+  });
+
+  ipcMain.on("app:request-close:result", (_event, payload) => {
+    const decision = payload?.decision;
+    console.log(`[CLOSE] request-close result decision=${decision}`);
+    if (!closeFlowInProgress || closeFlowFallbackActive) return;
+    if (decision === "cancel") {
+      closeFlowInProgress = false;
+      clearTimeout(closeFlowTimer);
+      return;
+    }
+    if (decision === "close_no_save" || decision === "close_after_save") {
+      finalizeQuit(`request-close:${decision}`);
+      return;
+    }
+    closeFlowInProgress = false;
+    clearTimeout(closeFlowTimer);
   });
 
   app.on("activate", () => {
@@ -135,9 +198,15 @@ app.whenReady().then(() => {
   console.log("[MAIN] handlers ready: app:quit, window:close, before-quit, will-quit, window-all-closed");
 });
 
-app.on("before-quit", () => {
-  console.log("[MAIN] before-quit");
-  isQuitting = true;
+app.on("before-quit", (event) => {
+  console.log(`[CLOSE] onClose source=before-quit isQuitting=${isQuitting} inProgress=${closeFlowInProgress}`);
+  if (isQuitting) return;
+  if (closeFlowInProgress) {
+    event.preventDefault();
+    return;
+  }
+  event.preventDefault();
+  startCloseFlow("before-quit");
 });
 
 app.on("will-quit", () => {
