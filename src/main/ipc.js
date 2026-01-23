@@ -75,18 +75,28 @@ const buildExportHtml = ({ title, meta, columns, rows }) => {
     const cells = row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('');
     return `<tr>${cells}</tr>`;
   }).join('');
+  const metaLines = [];
+  if (meta?.station) metaLines.push(`ステーション: ${meta.station}`);
+  if (meta?.generatedAt) metaLines.push(`出力日時: ${meta.generatedAt}`);
+  if (typeof meta?.count === 'number') metaLines.push(`件数: ${meta.count}`);
+  if (meta?.conditions) metaLines.push(`条件: ${meta.conditions}`);
+  const metaHtml = metaLines.map((line) => `<div class="meta-line">${escapeHtml(line)}</div>`).join('');
   return `<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8">
   <title>${escapeHtml(title || 'export')}</title>
   <style>
+    @page { margin: 12mm; }
     * { box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN",
         "Hiragino Sans", "Meiryo", sans-serif;
       color: #111;
-      margin: 24px;
+      margin: 0;
+    }
+    .page {
+      padding: 0;
     }
     .title {
       font-size: 18px;
@@ -98,33 +108,43 @@ const buildExportHtml = ({ title, meta, columns, rows }) => {
       color: #555;
       margin-bottom: 12px;
     }
+    .meta-line + .meta-line {
+      margin-top: 2px;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
-      table-layout: fixed;
-      font-size: 11px;
+      table-layout: auto;
+      font-size: 10.5px;
     }
     th, td {
       border: 1px solid #c8c8c8;
-      padding: 6px 8px;
+      padding: 4px 6px;
       vertical-align: top;
       word-break: break-word;
+      word-wrap: break-word;
     }
     thead { display: table-header-group; }
+    thead th {
+      background: #f3f3f3;
+      font-weight: 600;
+    }
     tr { break-inside: avoid; page-break-inside: avoid; }
   </style>
 </head>
 <body>
-  <div class="title">${escapeHtml(title || '名義SPOT管理')}</div>
-  <div class="meta">${escapeHtml(meta || '')}</div>
-  <table>
-    <thead>
-      <tr>${headerCells}</tr>
-    </thead>
-    <tbody>
-      ${bodyRows}
-    </tbody>
-  </table>
+  <div class="page">
+    <div class="title">${escapeHtml(title || '名義SPOT管理')}</div>
+    <div class="meta">${metaHtml}</div>
+    <table>
+      <thead>
+        <tr>${headerCells}</tr>
+      </thead>
+      <tbody>
+        ${bodyRows}
+      </tbody>
+    </table>
+  </div>
 </body>
 </html>`;
 };

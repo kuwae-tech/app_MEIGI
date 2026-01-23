@@ -2598,8 +2598,22 @@ function daysUntilKey(k){
 
   const exportDefaultOn = new Set(["dateText","artist","company"]);
 
-  function getExportMeta(){
-    const stationLabel = (app.station === "802") ? "802" : "COCOLO";
+  function formatExportDateTime(dt){
+    const yyyy = dt.getFullYear();
+    const mm = String(dt.getMonth() + 1).padStart(2, "0");
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const hh = String(dt.getHours()).padStart(2, "0");
+    const min = String(dt.getMinutes()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+  }
+
+  function formatKeyDate(k){
+    if (k == null) return "";
+    const {y,m,d} = keyToYMD(k);
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+
+  function getTabLabel(){
     const tabLabelMap = {
       applied: "申請あり",
       manual: "申請なし",
@@ -2607,9 +2621,44 @@ function daysUntilKey(k){
       delivered: "搬入済み",
       ended: "公演終了"
     };
-    const tabLabel = tabLabelMap[app.ui.tab] || app.ui.tab;
+    return tabLabelMap[app.ui.tab] || app.ui.tab;
+  }
+
+  function buildExportConditions(){
+    const parts = [];
+    parts.push(`タブ:${getTabLabel()}`);
+
+    const f = app.ui.filter;
+    if (f.fromKey != null || f.toKey != null){
+      const from = formatKeyDate(f.fromKey);
+      const to = formatKeyDate(f.toKey);
+      if (from && to){
+        parts.push(`期間:${from}〜${to}`);
+      }else if (from){
+        parts.push(`期間:${from}〜`);
+      }else if (to){
+        parts.push(`期間:〜${to}`);
+      }
+    }
+    if (f.keyword && f.keyword.trim()){
+      parts.push(`検索:${f.keyword.trim()}`);
+    }
+    if (f.statusSet.size > 0){
+      parts.push(`制作状況:${Array.from(f.statusSet).join(",")}`);
+    }
+
+    return parts.join(" / ");
+  }
+
+  function getExportMetaInfo(view){
+    const stationLabel = (currentStation === "802") ? "802" : "COCOLO";
     const now = new Date();
-    return `${stationLabel} / ${tabLabel} / ${now.toLocaleString("ja-JP")}`;
+    return {
+      station: stationLabel,
+      generatedAt: formatExportDateTime(now),
+      count: view.length,
+      conditions: buildExportConditions()
+    };
   }
 
   function exportCellValue(rec, key){
@@ -2636,8 +2685,8 @@ function daysUntilKey(k){
       return;
     }
     const payload = {
-      title: "名義SPOT管理",
-      meta: getExportMeta(),
+      title: "名義SPOT管理 出力",
+      meta: getExportMetaInfo(view),
       columns: columns.map((c)=> c.label),
       rows: buildExportRows(view, columns)
     };
@@ -2660,11 +2709,59 @@ function daysUntilKey(k){
       alert("Excel書き出しはアプリ版で利用できます。");
       return;
     }
+    const meta = getExportMetaInfo(view);
+    const metaRows = [
+      ["ステーション", meta.station],
+      ["出力日時", meta.generatedAt],
+      ["件数", String(meta.count)],
+      ["条件", meta.conditions || ""],
+      []
+    ];
+    const headerRowIndex = metaRows.length + 1;
+    const tableRows = buildExportRows(view, columns);
     const aoa = [
+      ...metaRows,
       columns.map((c)=> c.label),
-      ...buildExportRows(view, columns)
+      ...tableRows
     ];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const headerRow = headerRowIndex - 1;
+
+    if (columns.length){
+      ws["!autofilter"] = {
+        ref: XLSX.utils.encode_range({
+          s: { c: 0, r: headerRow },
+          e: { c: columns.length - 1, r: headerRow }
+        })
+      };
+    }
+    ws["!freeze"] = {
+      xSplit: 0,
+      ySplit: headerRowIndex,
+      topLeftCell: `A${headerRowIndex + 1}`,
+      activePane: "bottomLeft",
+      state: "frozen"
+    };
+    for (let c = 0; c < columns.length; c += 1){
+      const cellAddress = XLSX.utils.encode_cell({ c, r: headerRow });
+      const cell = ws[cellAddress];
+      if (cell){
+        cell.s = cell.s || {};
+        cell.s.font = { ...(cell.s.font || {}), bold: true };
+      }
+    }
+    const minWidth = 6;
+    const maxWidth = 40;
+    const colWidths = columns.map((c, idx)=>{
+      let maxLen = Array.from(String(c.label ?? "")).length;
+      for (const row of tableRows){
+        const value = row[idx];
+        const len = Array.from(String(value ?? "")).length;
+        if (len > maxLen) maxLen = len;
+      }
+      return Math.min(maxWidth, Math.max(minWidth, maxLen + 2));
+    });
+    ws["!cols"] = colWidths.map((wch)=> ({ wch }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "list");
     const out = XLSX.write(wb, { bookType:"xlsx", type:"array" });
