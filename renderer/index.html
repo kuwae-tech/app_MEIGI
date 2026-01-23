@@ -481,6 +481,26 @@
     .settingsTabs button.active{background:#fff;color:#1d1d1f;box-shadow:0 6px 14px rgba(0,0,0,.08)}
     .settingsSection{display:none;flex-direction:column;gap:12px}
     .settingsSection.active{display:flex}
+    .settingsSection.logSection{flex:1;min-height:0}
+    .settingsLogSearch input{width:100%}
+    .settingsLogList{
+      flex:1;
+      min-height:0;
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:10px;
+      background:#fafafa;
+      overflow:auto;
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+    .logGroup{display:flex;flex-direction:column;gap:8px}
+    .logDate{font-size:12px;font-weight:800;color:#1d1d1f}
+    .logEntry{padding:8px 10px;border-radius:10px;background:#fff;border:1px solid var(--border);display:flex;flex-direction:column;gap:4px}
+    .logMeta{font-size:11px;color:var(--sub);display:flex;flex-wrap:wrap;gap:6px}
+    .logDetail{font-size:12px;color:#1d1d1f;white-space:pre-wrap;word-break:break-word}
+    .logEmpty{font-size:12px;color:var(--sub);text-align:center;padding:16px}
     .fieldRow{display:flex;flex-direction:column;gap:6px}
     .fieldRow label{font-size:12px;font-weight:700;color:#1d1d1f}
     .fieldRow input, .fieldRow select, .fieldRow textarea{
@@ -627,6 +647,7 @@
         <button data-tab="share" class="active">共有（Supabase）</button>
         <button data-tab="notify">通知</button>
         <button data-tab="backup">バックアップ/復元</button>
+        <button data-tab="log">ログ</button>
       </div>
     </div>
     <div class="modalBody">
@@ -737,6 +758,13 @@
         </div>
         <div class="hintText">復元はローカルのみ反映されます。保存するまで共有に反映されません。</div>
       </div>
+      <div class="settingsSection logSection" id="settingsLog">
+        <div class="fieldRow settingsLogSearch">
+          <label for="settingsLogSearch">検索</label>
+          <input id="settingsLogSearch" type="text" placeholder="ログを検索...">
+        </div>
+        <div class="settingsLogList" id="settingsLogList"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -799,6 +827,13 @@
       console.log(`[DATA] ${message}`, extra);
     } else {
       console.log(`[DATA] ${message}`);
+    }
+  };
+  const emitLogEvent = (payload) => {
+    try {
+      window.dispatchEvent(new CustomEvent('meigi-log', { detail: payload }));
+    } catch (e) {
+      console.warn('[LOG] dispatch failed', e);
     }
   };
 
@@ -2065,6 +2100,10 @@ function daysUntilKey(k){
 
       render();
       logData(`import ok rows=${rowsMain.length}`);
+      emitLogEvent({
+        action: "IMPORT_SUMMARY",
+        detail: `取込: 新規${newCount} / 更新${updCount}（${currentStation}）${file?.name ? ` file=${file.name}` : ""}`
+      });
     } catch(e){
       console.error(e);
       showBanner("ng", (e && e.message) ? e.message : String(e));
@@ -2121,6 +2160,7 @@ function daysUntilKey(k){
   function openMemoModal(recId){
     const rec = app.recordsById[recId];
     if (!rec) return;
+    const beforeMemo = rec.memo || "";
 
     const body = document.createElement("div");
     const ta = document.createElement("textarea");
@@ -2147,6 +2187,14 @@ function daysUntilKey(k){
       markDirty(true);
       closeModal();
       render();
+      if ((rec.memo || "") !== beforeMemo) {
+        emitLogEvent({
+          action: "MEMO_UPDATE",
+          recordId: rec.id,
+          artist: rec.artist || "",
+          detail: rec.memo
+        });
+      }
     });
 
     foot.appendChild(cancel);
@@ -2159,6 +2207,7 @@ function daysUntilKey(k){
   function openManualEditModal(recId){
     const rec = app.recordsById[recId];
     if (!rec) return;
+    const beforeMemo = rec.memo || "";
 
     const body = document.createElement("div");
     body.className = "grid2";
@@ -2246,6 +2295,14 @@ function daysUntilKey(k){
       markDirty(true);
       closeModal();
       render();
+      if ((rec.memo || "") !== beforeMemo) {
+        emitLogEvent({
+          action: "MEMO_UPDATE",
+          recordId: rec.id,
+          artist: rec.artist || "",
+          detail: rec.memo
+        });
+      }
     });
 
     foot.appendChild(del);
@@ -2297,6 +2354,7 @@ function daysUntilKey(k){
         e.stopPropagation();
 
         const beforeTab = effectiveTab(rec);
+        const beforeStatus = rec.status || "";
         // 変更後に即ソートで位置が飛ばないよう、現表示順を一時ロック
         app.ui.sortLock = { tab: app.ui.tab, ids: (app.ui.lastRenderIds || []).slice() };
 
@@ -2309,7 +2367,13 @@ function daysUntilKey(k){
         app.ui.deferTabMoves = true;
 
         closeStatusPopover();
-render();
+        emitLogEvent({
+          action: "STATUS_CHANGE",
+          recordId: rec.id,
+          artist: rec.artist || "",
+          detail: `制作状況: ${beforeStatus || "（未設定）"} → ${rec.status || "（未設定）"}`
+        });
+        render();
       });
       grid.appendChild(btn);
     }
@@ -3057,6 +3121,12 @@ tbody.appendChild(tr);
     app.recordsById[rec.id] = rec;
     markDirty(true);
     render();
+    emitLogEvent({
+      action: "ADD_NO_REQUEST",
+      recordId: rec.id,
+      artist: rec.artist || "",
+      detail: "申請なし追加"
+    });
     openManualEditModal(rec.id);
   });
 

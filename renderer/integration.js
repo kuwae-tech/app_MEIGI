@@ -57,6 +57,8 @@
   const onlinePill = () => $('onlinePill');
 
   let settings = null;
+  let logEntries = [];
+  let logSearchQuery = '';
   let supabaseClient = null;
   let supabaseAuthSub = null;
   let session = null;
@@ -69,6 +71,13 @@
   let locksById = new Map();
   let displayName = null;
   let selectedBackups = { '802': null, 'COCOLO': null };
+
+  const LOG_RETENTION_DAYS = 7;
+  const LOG_MAX_ENTRIES = 3000;
+
+  const pad2 = (v) => String(v).padStart(2, '0');
+  const formatDateKey = (date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  const formatTimeLabel = (date) => `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 
   const getCurrentStation = () => {
     try {
@@ -105,6 +114,123 @@
     $('notifyWeeklyFields').style.display = mode === 'weekly' ? '' : 'none';
     $('notifyDailyFields').style.display = mode === 'daily' || mode === 'start+daily' ? '' : 'none';
     $('notifyHourlyFields').style.display = mode === 'hourly' ? '' : 'none';
+  };
+
+  const getLogUser = () => displayName || session?.user?.email || 'unknown';
+
+  const pruneLogs = (logs) => {
+    const cutoff = Date.now() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const filtered = (logs || []).filter((entry) => {
+      if (!entry || typeof entry.ts !== 'number') return true;
+      return entry.ts >= cutoff;
+    });
+    const sorted = filtered.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    let trimmed = sorted;
+    let removed = (logs?.length || 0) - sorted.length;
+    if (sorted.length > LOG_MAX_ENTRIES) {
+      removed += sorted.length - LOG_MAX_ENTRIES;
+      trimmed = sorted.slice(0, LOG_MAX_ENTRIES);
+    }
+    if (removed > 0) {
+      console.log(`[LOG] prune removed=${removed} kept=${trimmed.length}`);
+    }
+    return { logs: trimmed, removed };
+  };
+
+  const loadLogs = async () => {
+    const stored = await bridge.logs.get();
+    const { logs, removed } = pruneLogs(Array.isArray(stored) ? stored : []);
+    if (removed > 0) {
+      await bridge.logs.set(logs);
+    }
+    logEntries = logs;
+    return logEntries;
+  };
+
+  const appendLogEntry = async (payload) => {
+    if (!payload?.action) return;
+    const now = new Date();
+    const entry = {
+      id: (crypto?.randomUUID?.() || `log-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+      ts: now.getTime(),
+      dateKey: formatDateKey(now),
+      timeLabel: formatTimeLabel(now),
+      user: getLogUser(),
+      station: payload.station || getCurrentStation(),
+      action: payload.action,
+      recordId: payload.recordId,
+      artist: payload.artist,
+      detail: payload.detail || ''
+    };
+    const next = [entry, ...(logEntries || [])];
+    const { logs } = pruneLogs(next);
+    logEntries = logs;
+    await bridge.logs.set(logEntries);
+    console.log(`[LOG] append action=${entry.action} station=${entry.station} dateKey=${entry.dateKey}`);
+    renderLogList();
+  };
+
+  const matchesLogQuery = (entry, query) => {
+    if (!query) return true;
+    const haystack = [
+      entry.user,
+      entry.station,
+      entry.action,
+      entry.recordId,
+      entry.artist,
+      entry.detail
+    ]
+      .filter((v) => v !== undefined && v !== null)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(query);
+  };
+
+  const renderLogList = () => {
+    const list = $('settingsLogList');
+    if (!list) return;
+    const query = logSearchQuery.trim().toLowerCase();
+    const filtered = (logEntries || []).filter((entry) => matchesLogQuery(entry, query));
+    list.innerHTML = '';
+    if (!filtered.length) {
+      const empty = document.createElement('div');
+      empty.className = 'logEmpty';
+      empty.textContent = 'ログがありません。';
+      list.appendChild(empty);
+      return;
+    }
+    let currentGroup = null;
+    filtered.forEach((entry) => {
+      if (!currentGroup || currentGroup.dateKey !== entry.dateKey) {
+        const group = document.createElement('div');
+        group.className = 'logGroup';
+        const heading = document.createElement('div');
+        heading.className = 'logDate';
+        heading.textContent = entry.dateKey || '';
+        group.appendChild(heading);
+        list.appendChild(group);
+        currentGroup = { dateKey: entry.dateKey, el: group };
+      }
+      const item = document.createElement('div');
+      item.className = 'logEntry';
+      const meta = document.createElement('div');
+      meta.className = 'logMeta';
+      const metaParts = [
+        entry.timeLabel || '',
+        entry.user || '',
+        entry.station || '',
+        entry.action || ''
+      ].filter(Boolean);
+      if (entry.recordId) metaParts.push(`ID:${entry.recordId}`);
+      if (entry.artist) metaParts.push(`アーティスト:${entry.artist}`);
+      meta.textContent = metaParts.join(' / ');
+      const detail = document.createElement('div');
+      detail.className = 'logDetail';
+      detail.textContent = entry.detail || '';
+      item.appendChild(meta);
+      item.appendChild(detail);
+      currentGroup.el.appendChild(item);
+    });
   };
 
   const updateSettings = async (partial) => {
@@ -677,6 +803,7 @@
     $('settingsBtn')?.addEventListener('click', () => {
       $('settingsBackdrop').style.display = 'flex';
       log(TAGS.settings, 'open');
+      loadLogs().then(renderLogList);
     });
     $('settingsCloseBtn')?.addEventListener('click', () => {
       $('settingsBackdrop').style.display = 'none';
@@ -692,10 +819,19 @@
       if (!btn) return;
       $('settingsTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
       const tab = btn.dataset.tab;
-      ['share', 'notify', 'backup'].forEach((key) => {
-        const section = key === 'share' ? $('settingsShare') : key === 'notify' ? $('settingsNotify') : $('settingsBackup');
+      ['share', 'notify', 'backup', 'log'].forEach((key) => {
+        const section = key === 'share'
+          ? $('settingsShare')
+          : key === 'notify'
+            ? $('settingsNotify')
+            : key === 'backup'
+              ? $('settingsBackup')
+              : $('settingsLog');
         section.classList.toggle('active', key === tab);
       });
+      if (tab === 'log') {
+        loadLogs().then(renderLogList);
+      }
     });
   };
 
@@ -876,6 +1012,13 @@
     initSettingsModal();
     bindSettingsInputs();
     updateNotifyFieldsVisibility();
+    $('settingsLogSearch')?.addEventListener('input', (e) => {
+      logSearchQuery = e.target.value || '';
+      renderLogList();
+    });
+    window.addEventListener('meigi-log', (event) => {
+      appendLogEntry(event.detail);
+    });
 
     wrapSaveNow();
     wrapManualEdit();
