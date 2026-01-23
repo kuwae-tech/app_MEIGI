@@ -24,6 +24,16 @@
       --okText:#0f5a2a;
       --ngBg:rgba(255,59,48,.10);
       --ngText:#8b1a12;
+      --status-blue-bg:rgba(10,132,255,.08);
+      --status-green-bg:rgba(52,199,89,.10);
+      --status-orange-bg:rgba(255,149,0,.10);
+      --status-red-bg:rgba(255,59,48,.08);
+      --status-purple-bg:rgba(88,86,214,.10);
+      --status-dark-bg:rgba(60,60,67,.10);
+      --status-gray-bg:rgba(142,142,147,.10);
+      --status-text:#1d1d1f;
+      --date-alert-red-bg:rgba(255,149,0,.16);
+      --date-alert-yellow-bg:rgba(255,204,0,.16);
       --radius:16px;
       --radiusSm:12px;
       --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Arial,"Hiragino Sans","Noto Sans JP",sans-serif;
@@ -204,13 +214,13 @@
       text-overflow:ellipsis;
     }
     .badgeBtn:active{transform:translateY(1px)}
-    .b-blue{border-color:rgba(10,132,255,.22);background:rgba(10,132,255,.08)}
-    .b-green{border-color:rgba(52,199,89,.22);background:rgba(52,199,89,.10)}
-    .b-orange{border-color:rgba(255,149,0,.22);background:rgba(255,149,0,.10)}
-    .b-red{border-color:rgba(255,59,48,.18);background:rgba(255,59,48,.08)}
-    .b-purple{border-color:rgba(88,86,214,.22);background:rgba(88,86,214,.10)}
-    .b-dark{border-color:rgba(60,60,67,.28);background:rgba(60,60,67,.10)}
-    .b-gray{border-color:rgba(142,142,147,.22);background:rgba(142,142,147,.10)}
+    .b-blue{border-color:rgba(10,132,255,.22);background:var(--status-blue-bg);color:var(--status-text)}
+    .b-green{border-color:rgba(52,199,89,.22);background:var(--status-green-bg);color:var(--status-text)}
+    .b-orange{border-color:rgba(255,149,0,.22);background:var(--status-orange-bg);color:var(--status-text)}
+    .b-red{border-color:rgba(255,59,48,.18);background:var(--status-red-bg);color:var(--status-text)}
+    .b-purple{border-color:rgba(88,86,214,.22);background:var(--status-purple-bg);color:var(--status-text)}
+    .b-dark{border-color:rgba(60,60,67,.28);background:var(--status-dark-bg);color:var(--status-text)}
+    .b-gray{border-color:rgba(142,142,147,.22);background:var(--status-gray-bg);color:var(--status-text)}
 
     /* Modal */
     .modalBackdrop{position:fixed;inset:0;background:rgba(0,0,0,.28);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px;box-sizing:border-box}
@@ -302,8 +312,8 @@
     .tableWrap{-webkit-overflow-scrolling:touch}
 
     /* Date alerts */
-    .dateAlertRed{background:rgba(255,59,48,.10)}
-    .dateAlertYellow{background:rgba(255,204,0,.16)}
+    .dateAlertRed{background:var(--date-alert-red-bg)}
+    .dateAlertYellow{background:var(--date-alert-yellow-bg)}
 
     /* Status popover (inline picker) */
     .statusPopover{
@@ -1304,6 +1314,18 @@
   function statusForLogic(st){
     return normalizeStatus(st);
   }
+  function statusColorKeyForStatus(st){
+    const s = normalizeStatus(st);
+    if (s === "搬入済") return "green";
+    if (s === "確認済") return "blue";
+    if (s === "確認済み") return "blue";
+    if (s === "確認中") return "orange";
+    if (s === "制作中") return "purple";
+    if (s === "未制作") return "red";
+    if (s === "不要") return "dark";
+    if (!s) return "gray";
+    return "gray";
+  }
 function daysUntilKey(k){
     if (k == null) return null;
     const {y,m,d} = keyToYMD(k);
@@ -1350,16 +1372,8 @@ function daysUntilKey(k){
   const STATUS_DROPDOWN = ["未制作","制作中","確認中","確認済","搬入済","不要"]; // 0は選択肢に出さない
 
   function statusBadgeClass(st){
-    const s = normalizeStatus(st);
-    if (s === "搬入済") return "badgeBtn b-green";
-    if (s === "確認済") return "badgeBtn b-blue";
-    if (s === "確認済み") return "badgeBtn b-blue";
-    if (s === "確認中") return "badgeBtn b-orange";
-    if (s === "制作中") return "badgeBtn b-purple";
-    if (s === "未制作") return "badgeBtn b-red";
-    if (s === "不要") return "badgeBtn b-dark";
-    if (!s) return "badgeBtn b-gray";
-    return "badgeBtn b-gray";
+    const key = statusColorKeyForStatus(st);
+    return `badgeBtn b-${key}`;
   }
 
   function clone(obj){
@@ -2593,13 +2607,28 @@ function daysUntilKey(k){
     { key:"venue", label:"会場" },
     { key:"presaleText", label:"前売り日" },
     { key:"company", label:"申込社" },
-    { key:"person", label:"担当者" }
+    { key:"person", label:"担当者" },
+    { key:"memo", label:"メモ" }
   ];
 
-  const exportDefaultOn = new Set(["dateText","artist","company"]);
+  const exportDefaultOn = new Set(["status","dateText","artist","company"]);
 
-  function getExportMeta(){
-    const stationLabel = (app.station === "802") ? "802" : "COCOLO";
+  function formatExportDateTime(dt){
+    const yyyy = dt.getFullYear();
+    const mm = String(dt.getMonth() + 1).padStart(2, "0");
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const hh = String(dt.getHours()).padStart(2, "0");
+    const min = String(dt.getMinutes()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+  }
+
+  function formatKeyDate(k){
+    if (k == null) return "";
+    const {y,m,d} = keyToYMD(k);
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+
+  function getTabLabel(){
     const tabLabelMap = {
       applied: "申請あり",
       manual: "申請なし",
@@ -2607,9 +2636,97 @@ function daysUntilKey(k){
       delivered: "搬入済み",
       ended: "公演終了"
     };
-    const tabLabel = tabLabelMap[app.ui.tab] || app.ui.tab;
+    return tabLabelMap[app.ui.tab] || app.ui.tab;
+  }
+
+  function buildExportConditions(){
+    const parts = [];
+    parts.push(`タブ:${getTabLabel()}`);
+
+    const f = app.ui.filter;
+    if (f.fromKey != null || f.toKey != null){
+      const from = formatKeyDate(f.fromKey);
+      const to = formatKeyDate(f.toKey);
+      if (from && to){
+        parts.push(`期間:${from}〜${to}`);
+      }else if (from){
+        parts.push(`期間:${from}〜`);
+      }else if (to){
+        parts.push(`期間:〜${to}`);
+      }
+    }
+    if (f.keyword && f.keyword.trim()){
+      parts.push(`検索:${f.keyword.trim()}`);
+    }
+    if (f.statusSet.size > 0){
+      parts.push(`制作状況:${Array.from(f.statusSet).join(",")}`);
+    }
+
+    return parts.join(" / ");
+  }
+
+  function getExportMetaInfo(view){
+    const stationLabel = (currentStation === "802") ? "802" : "COCOLO";
     const now = new Date();
-    return `${stationLabel} / ${tabLabel} / ${now.toLocaleString("ja-JP")}`;
+    return {
+      station: stationLabel,
+      generatedAt: formatExportDateTime(now),
+      count: view.length,
+      conditions: buildExportConditions()
+    };
+  }
+
+  function getStatusColorMap(){
+    const rootStyle = getComputedStyle(document.documentElement);
+    const text = rootStyle.getPropertyValue("--status-text").trim() || "#1d1d1f";
+    return {
+      blue: { bg: rootStyle.getPropertyValue("--status-blue-bg").trim(), text },
+      green: { bg: rootStyle.getPropertyValue("--status-green-bg").trim(), text },
+      orange: { bg: rootStyle.getPropertyValue("--status-orange-bg").trim(), text },
+      red: { bg: rootStyle.getPropertyValue("--status-red-bg").trim(), text },
+      purple: { bg: rootStyle.getPropertyValue("--status-purple-bg").trim(), text },
+      dark: { bg: rootStyle.getPropertyValue("--status-dark-bg").trim(), text },
+      gray: { bg: rootStyle.getPropertyValue("--status-gray-bg").trim(), text }
+    };
+  }
+
+  function getDateHighlightMap(){
+    const rootStyle = getComputedStyle(document.documentElement);
+    return {
+      red: rootStyle.getPropertyValue("--date-alert-red-bg").trim(),
+      yellow: rootStyle.getPropertyValue("--date-alert-yellow-bg").trim()
+    };
+  }
+
+  function cssColorToARGB(color){
+    if (!color) return null;
+    const s = color.trim();
+    if (s.startsWith("#")){
+      const hex = s.slice(1);
+      if (hex.length === 3){
+        const r = hex[0] + hex[0];
+        const g = hex[1] + hex[1];
+        const b = hex[2] + hex[2];
+        return `FF${r}${g}${b}`.toUpperCase();
+      }
+      if (hex.length === 6){
+        return `FF${hex}`.toUpperCase();
+      }
+      if (hex.length === 8){
+        return hex.toUpperCase();
+      }
+    }
+    const rgba = s.match(/rgba?\(([^)]+)\)/i);
+    if (rgba){
+      const parts = rgba[1].split(",").map((p)=> p.trim());
+      const r = Number(parts[0] ?? 0);
+      const g = Number(parts[1] ?? 0);
+      const b = Number(parts[2] ?? 0);
+      const a = parts.length > 3 ? Math.round(Number(parts[3]) * 255) : 255;
+      const toHex = (v)=> Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0").toUpperCase();
+      return `${toHex(a)}${toHex(r)}${toHex(g)}${toHex(b)}`;
+    }
+    return null;
   }
 
   function exportCellValue(rec, key){
@@ -2635,12 +2752,25 @@ function daysUntilKey(k){
       alert("PDF書き出しはアプリ版で利用できます。");
       return;
     }
+    const statusColorMap = getStatusColorMap();
+    const statusRowKeys = view.map((rec)=> statusColorKeyForStatus(rec.status));
+    const dateHighlightMap = getDateHighlightMap();
+    const dateHighlightLevels = view.map((rec)=> dateAlertLevel(rec));
+    const highlightedCount = dateHighlightLevels.filter(Boolean).length;
     const payload = {
-      title: "名義SPOT管理",
-      meta: getExportMeta(),
+      title: "名義SPOT管理 出力",
+      meta: getExportMetaInfo(view),
       columns: columns.map((c)=> c.label),
-      rows: buildExportRows(view, columns)
+      columnKeys: columns.map((c)=> c.key),
+      rows: buildExportRows(view, columns),
+      statusColorMap,
+      statusRowKeys,
+      dateHighlightMap,
+      dateHighlightLevels
     };
+    console.log("[EXPORT] pdf statusColor enabled");
+    console.log("[EXPORT] dateHighlight enabled threshold=1m/2m");
+    console.log(`[EXPORT] highlighted rows/cells count=${highlightedCount}`);
     const result = await window.meigi.export.pdf(payload);
     if (result?.canceled) return;
     if (result?.ok){
@@ -2660,24 +2790,48 @@ function daysUntilKey(k){
       alert("Excel書き出しはアプリ版で利用できます。");
       return;
     }
-    const aoa = [
-      columns.map((c)=> c.label),
-      ...buildExportRows(view, columns)
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "list");
-    const out = XLSX.write(wb, { bookType:"xlsx", type:"array" });
-    const result = await window.meigi.export.excel({
-      suggestedName: "名義SPOT管理_書き出し.xlsx",
-      buffer: out
-    });
-    if (result?.canceled) return;
-    if (result?.ok){
-      toast("Excelを書き出しました");
-      closeModal();
-    }else{
-      alert("Excel書き出しに失敗しました。");
+    try{
+      let styleEngine = window.meigi?.xlsxStyle || window.XLSX;
+      if (!styleEngine?.utils?.book_new || !styleEngine?.utils?.book_append_sheet || !styleEngine?.utils?.aoa_to_sheet){
+        styleEngine = window.XLSX;
+      }
+
+      const defaultColumns = EXPORT_COLUMNS;
+      const usedColumns = columns.length ? columns : defaultColumns;
+      let tableRows = buildExportRows(view, usedColumns);
+      if (tableRows.length === 0){
+        const emptyRow = Array.from({ length: usedColumns.length }, (_v, idx)=> (idx === 0 ? "出力対象がありません" : ""));
+        tableRows = [emptyRow];
+        console.log("[EXPORT] excel no-data -> wrote placeholder row");
+      }
+
+      const aoa = [
+        usedColumns.map((c)=> c.label),
+        ...tableRows
+      ];
+      const ws = styleEngine.utils.aoa_to_sheet(aoa);
+      const wb = styleEngine.utils.book_new();
+      styleEngine.utils.book_append_sheet(wb, ws, "Export");
+      console.log("[EXPORT] excel wb sheets(after append)=", wb.SheetNames);
+      if (!wb.SheetNames || wb.SheetNames.length === 0){
+        const fallbackSheet = styleEngine.utils.aoa_to_sheet([["出力対象がありません"]]);
+        styleEngine.utils.book_append_sheet(wb, fallbackSheet, "NoData");
+      }
+      const out = styleEngine.write(wb, { bookType:"xlsx", type:"array" });
+      const result = await window.meigi.export.excel({
+        suggestedName: "名義SPOT管理_書き出し.xlsx",
+        buffer: out
+      });
+      if (result?.canceled) return;
+      if (result?.ok){
+        toast("Excelを書き出しました");
+        closeModal();
+      }else{
+        alert("Excel書き出しに失敗しました。");
+      }
+    }catch(err){
+      console.error("[EXPORT] excel failed", err);
+      alert(`Excel書き出しに失敗しました（理由: ${err?.message || "unknown"}）`);
     }
   }
 
