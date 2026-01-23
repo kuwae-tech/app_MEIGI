@@ -37,6 +37,21 @@ const api = {
           console.error('[PRELOAD] onPrepareQuit handler failed', error);
         }
       });
+    },
+    onRequestClose: (handler) => {
+      ipcRenderer.on('app:request-close', (_event, payload) => {
+        try {
+          handler?.(payload);
+        } catch (error) {
+          console.error('[PRELOAD] onRequestClose handler failed', error);
+        }
+      });
+    },
+    sendRequestCloseAck: (payload) => {
+      ipcRenderer.send('app:request-close:ack', payload);
+    },
+    sendRequestCloseResult: (payload) => {
+      ipcRenderer.send('app:request-close:result', payload);
     }
   }
 };
