@@ -47,6 +47,9 @@ const api = {
         }
       });
     },
+    sendRequestCloseAck: (payload) => {
+      ipcRenderer.send('app:request-close:ack', payload);
+    },
     sendRequestCloseResult: (payload) => {
       ipcRenderer.send('app:request-close:result', payload);
     }

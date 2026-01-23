@@ -3177,47 +3177,68 @@ const dz = $("dropZone");
     allowUnload = true;
   };
 
-  const sendCloseDecision = (decision) => {
-    console.log(`[UI] request-close decision=${decision}`);
-    window.meigi?.app?.sendRequestCloseResult?.({ decision });
+  const sendCloseDecision = (requestId, decision) => {
+    console.log(`[UI] request-close decision id=${requestId} decision=${decision}`);
+    if (requestId == null) return;
+    window.meigi?.app?.sendRequestCloseResult?.({ requestId, decision });
   };
 
-  const handleRequestClose = async (source) => {
+  const sendCloseAck = (requestId) => {
+    if (requestId == null) return;
+    console.log(`[UI] request-close ack id=${requestId}`);
+    window.meigi?.app?.sendRequestCloseAck?.({ requestId });
+  };
+
+  const handleRequestClose = async (payload) => {
+    const requestId = payload?.requestId ?? null;
     const isDirty = !!dirty;
-    console.log(`[UI] request-close received dirty=${isDirty}`);
+    console.log(`[UI] request-close received id=${requestId} dirty=${isDirty}`);
+    sendCloseAck(requestId);
     if (!isDirty) {
       allowAppClose();
-      sendCloseDecision("close_no_save");
+      if (requestId == null) {
+        window.meigi?.app?.quit?.();
+        return;
+      }
+      sendCloseDecision(requestId, "close_no_save");
       return;
     }
 
     const choice = await openCloseConfirmDialog();
     if (choice === "cancel") {
-      sendCloseDecision("cancel");
+      sendCloseDecision(requestId, "cancel");
       return;
     }
     if (choice === "save") {
       const ok = await saveNow({ showToast: false });
       if (!ok) {
-        sendCloseDecision("cancel");
+        sendCloseDecision(requestId, "cancel");
         return;
       }
       allowAppClose();
-      sendCloseDecision("close_after_save");
+      if (requestId == null) {
+        window.meigi?.app?.quit?.();
+        return;
+      }
+      sendCloseDecision(requestId, "close_after_save");
       return;
     }
     allowAppClose();
-    sendCloseDecision("close_no_save");
+    if (requestId == null) {
+      window.meigi?.app?.quit?.();
+      return;
+    }
+    sendCloseDecision(requestId, "close_no_save");
   };
 
   if (window.meigi?.app?.onPrepareQuit) {
     window.meigi.app.onPrepareQuit(() => {
-      handleRequestClose("window-close");
+      handleRequestClose({ source: "window-close" });
     });
   }
   if (window.meigi?.app?.onRequestClose) {
     window.meigi.app.onRequestClose((payload) => {
-      handleRequestClose(payload?.source || "window-close");
+      handleRequestClose(payload || { source: "window-close" });
     });
   }
 

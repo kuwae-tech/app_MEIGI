@@ -17,6 +17,10 @@ let closeFlowInProgress = false;
 let closeFlowFallbackActive = false;
 let quitTimer;
 let closeFlowTimer;
+let rendererReady = false;
+let closeRequestSeq = 0;
+let closeRequestId = null;
+let closeFlowAcked = false;
 
 const CLOSE_REQUEST_TIMEOUT_MS = 1500;
 
@@ -50,8 +54,8 @@ const finalizeQuit = (source) => {
   }, QUIT_FALLBACK_DELAY_MS);
 };
 
-const showFallbackCloseDialog = async () => {
-  console.warn("[CLOSE] fallback dialog used");
+const showFallbackCloseDialog = async (reason) => {
+  console.warn(`[CLOSE] fallback used reason=${reason}`);
   closeFlowFallbackActive = true;
   try {
     const result = await dialog.showMessageBox(mainWindow, {
@@ -79,18 +83,29 @@ const showFallbackCloseDialog = async () => {
 const startCloseFlow = (source) => {
   if (closeFlowInProgress) return;
   closeFlowInProgress = true;
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("app:request-close", { source });
-    console.log("[CLOSE] request-close sent");
-  } else {
-    showFallbackCloseDialog();
+  closeFlowAcked = false;
+  closeRequestId = ++closeRequestSeq;
+  const webContents = mainWindow?.webContents;
+  if (!mainWindow || mainWindow.isDestroyed() || !webContents) {
+    showFallbackCloseDialog("no-webcontents");
     return;
   }
-  clearTimeout(closeFlowTimer);
-  closeFlowTimer = setTimeout(() => {
-    if (!closeFlowInProgress) return;
-    showFallbackCloseDialog();
-  }, CLOSE_REQUEST_TIMEOUT_MS);
+  const rendererUnready = webContents.isLoading() || !rendererReady;
+  try {
+    webContents.send("app:request-close", { requestId: closeRequestId, source });
+    console.log(`[CLOSE] request-close sent id=${closeRequestId} source=${source}`);
+  } catch (error) {
+    console.error("[CLOSE] request-close send failed", error);
+    showFallbackCloseDialog("send-failed");
+    return;
+  }
+  if (rendererUnready) {
+    clearTimeout(closeFlowTimer);
+    closeFlowTimer = setTimeout(() => {
+      if (!closeFlowInProgress || closeFlowAcked || rendererReady) return;
+      showFallbackCloseDialog("renderer-unready");
+    }, CLOSE_REQUEST_TIMEOUT_MS);
+  }
 };
 
 function createMainWindow() {
@@ -115,6 +130,12 @@ function createMainWindow() {
   });
 
   win.once("ready-to-show", () => win.show());
+  win.webContents.on("did-start-loading", () => {
+    rendererReady = false;
+  });
+  win.webContents.on("did-finish-load", () => {
+    rendererReady = true;
+  });
   win.on("close", (event) => {
     console.log(`[CLOSE] onClose source=window-close isQuitting=${isQuitting} inProgress=${closeFlowInProgress}`);
     if (isQuitting) {
@@ -176,8 +197,10 @@ app.whenReady().then(() => {
 
   ipcMain.on("app:request-close:result", (_event, payload) => {
     const decision = payload?.decision;
-    console.log(`[CLOSE] request-close result decision=${decision}`);
+    const requestId = payload?.requestId;
+    console.log(`[CLOSE] result received id=${requestId} decision=${decision}`);
     if (!closeFlowInProgress || closeFlowFallbackActive) return;
+    if (requestId !== closeRequestId) return;
     if (decision === "cancel") {
       closeFlowInProgress = false;
       clearTimeout(closeFlowTimer);
@@ -189,6 +212,15 @@ app.whenReady().then(() => {
     }
     closeFlowInProgress = false;
     clearTimeout(closeFlowTimer);
+  });
+
+  ipcMain.on("app:request-close:ack", (_event, payload) => {
+    const requestId = payload?.requestId;
+    if (!closeFlowInProgress || closeFlowFallbackActive) return;
+    if (requestId !== closeRequestId) return;
+    closeFlowAcked = true;
+    clearTimeout(closeFlowTimer);
+    console.log(`[CLOSE] ack received id=${requestId} -> cancel fallback`);
   });
 
   app.on("activate", () => {
