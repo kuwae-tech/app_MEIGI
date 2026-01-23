@@ -29,15 +29,23 @@ const requestAppQuit = (source) => {
     console.log(`[MAIN] quit already in progress (${source})`);
     return;
   }
+  if (source === "window-close") {
+    console.log("[MAIN] quit requested: window-close");
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("app:prepare-quit");
+    }
+    return;
+  }
   isQuitting = true;
-  console.log(`[MAIN] quit requested: ${source}`);
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("app:prepare-quit");
+  if (source === "ipc") {
+    console.log("[MAIN] app:quit received; isQuitting=true");
+  } else {
+    console.log(`[MAIN] quit requested: ${source}`);
   }
   app.quit();
   clearTimeout(quitTimer);
   quitTimer = setTimeout(() => {
-    console.warn("[MAIN] fallback app.exit(0)");
+    console.warn("[MAIN] fallback app.exit(0) after timeout");
     app.exit(0);
   }, QUIT_FALLBACK_DELAY_MS);
 };
@@ -117,7 +125,6 @@ app.whenReady().then(() => {
   createMainWindow();
 
   ipcMain.on("app:quit", () => {
-    console.log("[MAIN] ipc app:quit");
     requestAppQuit("ipc");
   });
 
