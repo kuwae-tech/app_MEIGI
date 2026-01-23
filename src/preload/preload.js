@@ -1,5 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+let xlsxStyle = null;
+try {
+  xlsxStyle = require('xlsx-js-style');
+} catch (error) {
+  console.warn('[PRELOAD] xlsx-js-style not available', error?.message);
+}
+
 const api = {
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
@@ -20,6 +27,8 @@ const api = {
     excel: (payload) => ipcRenderer.invoke('export:excel', payload)
   },
   notify: (payload) => ipcRenderer.invoke('notify', payload),
+  xlsxStyle,
+  XLSX_STYLE: xlsxStyle,
   app: {
     quit: () => {
       try {
