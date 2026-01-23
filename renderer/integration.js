@@ -54,6 +54,18 @@
   };
 
   const $ = (id) => document.getElementById(id);
+  const on = (id, eventName, handler, opts) => {
+    const el = $(id);
+    if (!el) {
+      console.warn(`[APP] element missing: ${id}`);
+      return;
+    }
+    el.addEventListener(eventName, handler, opts);
+  };
+  const val = (id) => {
+    const el = $(id);
+    return typeof el?.value === 'string' ? el.value.trim() : '';
+  };
   const onlinePill = () => $('onlinePill');
 
   let settings = null;
@@ -243,6 +255,7 @@
 
   const ensureSupabaseClient = async () => {
     if (!settings.shareEnabled) {
+      setShareStatus('共有OFF', false);
       teardownSupabase();
       return null;
     }
@@ -836,15 +849,15 @@
   };
 
   const bindSettingsInputs = () => {
-    $('supabaseUrlInput').addEventListener('change', async (e) => {
+    on('supabaseUrlInput', 'change', async (e) => {
       await updateSettings({ supabaseUrl: e.target.value.trim() });
       await ensureSupabaseClient();
     });
-    $('supabaseKeyInput').addEventListener('change', async (e) => {
+    on('supabaseKeyInput', 'change', async (e) => {
       await updateSettings({ supabaseAnonKey: e.target.value.trim() });
       await ensureSupabaseClient();
     });
-    $('shareToggle').addEventListener('change', async (e) => {
+    on('shareToggle', 'change', async (e) => {
       await updateSettings({ shareEnabled: e.target.checked });
       await ensureSupabaseClient();
       if (e.target.checked) {
@@ -854,23 +867,42 @@
       }
     });
 
-    $('supabaseTestBtn').addEventListener('click', async () => {
-      await ensureSupabaseClient();
-      if (!supabaseClient) return;
-      const { error } = await supabaseClient.from('station_data').select('station').limit(1);
+    on('supabaseTestBtn', 'click', async () => {
+      setShareStatus('接続中…', true);
+      const url = val('supabaseUrlInput') || settings.supabaseUrl;
+      const key = val('supabaseKeyInput') || settings.supabaseAnonKey;
+      if (!url || !key) {
+        setShareStatus('未設定', false);
+        alert('Supabase URL/KEY が未設定です。');
+        return;
+      }
+      if (!window.supabase) {
+        setShareStatus('SDK未読込', false);
+        alert('Supabase SDK が読み込まれていません。');
+        return;
+      }
+      let client = supabaseClient;
+      if (settings.shareEnabled) {
+        client = await ensureSupabaseClient();
+      } else {
+        client = window.supabase.createClient(url, key);
+      }
+      if (!client) return;
+      const { error } = await client.from('station_data').select('station').limit(1);
       if (error) {
         setShareStatus('接続失敗', false);
-        log(TAGS.share, 'connection test failed', error);
+        log(TAGS.share, `connection failed: ${error.message || error}`, error);
+        alert(`接続に失敗しました: ${error.message || error}`);
       } else {
         setShareStatus('接続OK', true);
         log(TAGS.share, 'connection ok');
       }
     });
 
-    $('loginBtn').addEventListener('click', async () => {
+    on('loginBtn', 'click', async () => {
       await ensureSupabaseClient();
-      const email = $('loginEmailInput').value.trim();
-      const password = $('loginPasswordInput').value;
+      const email = val('loginEmailInput');
+      const password = $('loginPasswordInput')?.value || '';
       if (!email || !password) {
         alert('メールとパスワードを入力してください。');
         return;
@@ -882,52 +914,52 @@
       }
     });
 
-    $('logoutBtn').addEventListener('click', async () => {
+    on('logoutBtn', 'click', async () => {
       if (!supabaseClient) return;
       await supabaseClient.auth.signOut();
       log(TAGS.auth, 'signed out');
     });
 
-    $('notifyThreshold').addEventListener('change', async (e) => {
+    on('notifyThreshold', 'change', async (e) => {
       await updateSettings({ notify: { ...settings.notify, thresholdDays: Number(e.target.value) } });
     });
-    $('notifyMode').addEventListener('change', async (e) => {
+    on('notifyMode', 'change', async (e) => {
       await updateSettings({ notify: { ...settings.notify, mode: e.target.value } });
     });
-    $('notifyWeekday').addEventListener('change', async (e) => {
+    on('notifyWeekday', 'change', async (e) => {
       await updateSettings({ notify: { ...settings.notify, weekday: Number(e.target.value) } });
     });
-    $('notifyTimeWeekly').addEventListener('change', async (e) => {
+    on('notifyTimeWeekly', 'change', async (e) => {
       await updateSettings({ notify: { ...settings.notify, timeWeekly: e.target.value } });
     });
-    $('notifyTimeDaily').addEventListener('change', async (e) => {
+    on('notifyTimeDaily', 'change', async (e) => {
       await updateSettings({ notify: { ...settings.notify, timeDaily: e.target.value } });
     });
-    $('notifyIntervalHours').addEventListener('change', async (e) => {
+    on('notifyIntervalHours', 'change', async (e) => {
       await updateSettings({ notify: { ...settings.notify, intervalHours: Number(e.target.value) } });
     });
 
-    $('backupRetentionDays').addEventListener('change', async (e) => {
+    on('backupRetentionDays', 'change', async (e) => {
       await updateSettings({ backup: { retentionDays: Number(e.target.value) } });
     });
-    $('backupCleanupBtn').addEventListener('click', async () => {
+    on('backupCleanupBtn', 'click', async () => {
       const retentionDays = settings.backup.retentionDays || 7;
       await bridge.backups.cleanup({ retentionDays });
       await refreshBackupLists();
     });
 
-    $('restoreLatest802').addEventListener('click', async () => {
+    on('restoreLatest802', 'click', async () => {
       const list = await bridge.backups.list('802');
       await restoreBackup(list[0]?.path);
     });
-    $('restoreLatestCOCOLO').addEventListener('click', async () => {
+    on('restoreLatestCOCOLO', 'click', async () => {
       const list = await bridge.backups.list('COCOLO');
       await restoreBackup(list[0]?.path);
     });
-    $('restorePick802').addEventListener('click', async () => {
+    on('restorePick802', 'click', async () => {
       await restoreBackup(selectedBackups['802']);
     });
-    $('restorePickCOCOLO').addEventListener('click', async () => {
+    on('restorePickCOCOLO', 'click', async () => {
       await restoreBackup(selectedBackups['COCOLO']);
     });
   };

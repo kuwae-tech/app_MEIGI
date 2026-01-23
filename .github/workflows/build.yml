@@ -11,9 +11,6 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: write
-
 env:
   CI: true
   NODE_VERSION: "20"
@@ -22,129 +19,8 @@ env:
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  prepare:
-    name: prepare (ensure deps + lockfile)
-    runs-on: ubuntu-latest
-    outputs:
-      prepared_sha: ${{ steps.prep.outputs.prepared_sha }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Show versions
-        run: |
-          node -v
-          npm -v
-
-      - name: Ensure package-lock.json exists (create if missing)
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f package-lock.json ]; then
-            echo "package-lock.json exists"
-            exit 0
-          fi
-          echo "[warn] package-lock.json is missing -> generating via npm install (will be committed)"
-          npm install --include=dev
-
-      - name: Ensure lockfile is consistent (npm install if npm ci would fail)
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f package-lock.json ]; then
-            echo "Attempting npm ci (dry run)"
-            if npm ci --ignore-scripts --include=dev; then
-              echo "npm ci OK"
-              exit 0
-            fi
-            echo "[warn] npm ci failed -> repairing lockfile with npm install"
-            rm -rf node_modules
-            npm install --include=dev
-          fi
-
-      - name: Commit lockfile if changed
-        id: prep
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          REF_NAME: ${{ github.ref_name }}
-          HEAD_REF: ${{ github.head_ref }}
-          BASE_REPO: ${{ github.repository }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          can_push="false"
-          target_branch="$REF_NAME"
-
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            target_branch="$HEAD_REF"
-            if [ "$HEAD_REPO" = "$BASE_REPO" ]; then
-              can_push="true"
-            fi
-          else
-            # push/workflow_dispatch は通常ブランチ上なので push 可能
-            can_push="true"
-          fi
-
-          echo "[info] event=$EVENT_NAME target_branch=$target_branch can_push=$can_push head_repo=$HEAD_REPO base_repo=$BASE_REPO"
-
-          # PR（同一repo）の場合は、refs/pull/*/merge (detached) ではなく head ブランチに切り替えてから commit/push する
-          if [ "$EVENT_NAME" = "pull_request" ] && [ "$can_push" = "true" ]; then
-            echo "[info] Switching to PR head branch: $target_branch"
-            # ensure we have the branch locally
-            git fetch origin "refs/heads/${target_branch}:refs/remotes/origin/${target_branch}"
-            git checkout -B "${target_branch}" "origin/${target_branch}"
-          fi
-
-          # untracked / modified detection
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "[info] Changes detected: "
-            git status --porcelain
-
-            if [ "$can_push" != "true" ]; then
-              echo "[warn] Detected changes but cannot push back (fork PR). Resetting changes and continuing without commit."
-              git reset --hard
-            else
-              echo "[info] Committing lockfile changes..."
-              git add package-lock.json package.json || true
-              git commit -m "chore(ci): ensure lockfile for deterministic builds" || true
-
-              # Push safely to a fully-qualified branch ref
-              echo "[info] Pushing to refs/heads/${target_branch}"
-              for i in 1 2 3 4 5; do
-                if git push origin "HEAD:refs/heads/${target_branch}"; then
-                  echo "[info] Push succeeded"
-                  break
-                fi
-                echo "[warn] Push failed (attempt $i). Retrying..."
-                sleep $((i * 2))
-                if [ "$i" -eq 5 ]; then
-                  echo "[error] Push failed after retries"
-                  exit 1
-                fi
-              done
-            fi
-          else
-            echo "[info] No changes to commit."
-          fi
-
-          PREPARED_SHA="$(git rev-parse HEAD)"
-          echo "prepared_sha=$PREPARED_SHA" >> "$GITHUB_OUTPUT"
-          echo "[info] prepared_sha=$PREPARED_SHA"
-
   build:
     name: build (${{ matrix.os }})
-    needs: prepare
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -152,10 +28,8 @@ jobs:
         os: [macos-latest, windows-latest]
 
     steps:
-      - name: Checkout (prepared sha)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.prepared_sha }}
 
       - name: Detect lockfile presence
         id: lock
@@ -169,6 +43,13 @@ jobs:
             echo "has_lockfile=false" >> "$GITHUB_OUTPUT"
             echo "[warn] package-lock.json missing"
           fi
+
+      - name: Enforce lockfile presence
+        if: steps.lock.outputs.has_lockfile != 'true'
+        shell: bash
+        run: |
+          echo "::error ::package-lock.json がありません。package-lock.json をコミットして再実行してください。"
+          exit 1
 
       - name: Setup Node (with cache)
         if: steps.lock.outputs.has_lockfile == 'true'
@@ -194,10 +75,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -f package-lock.json ]; then
-            npm ci --include=dev
-          else
-            npm install --include=dev
+          if ! npm ci --include=dev; then
+            echo "::error ::package-lock.json をコミットして再実行してください。"
+            exit 1
+          fi
+
+      - name: Verify lockfile stayed clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error ::依存関係の不整合で lockfile 差分が発生しました。package-lock.json をコミットして再実行してください。"
+            git status --porcelain
+            exit 1
           fi
 
       - name: "Sanity check - xlsx must resolve"
