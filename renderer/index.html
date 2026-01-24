@@ -7,6 +7,7 @@
 
   <script src="./vendor/xlsx.full.min.js"></script>
   <script src="./vendor/supabase.min.js"></script>
+  <script src="./dateUtils.js"></script>
 
   <style>
     :root{
@@ -1246,6 +1247,99 @@
     const d = k%100;
     return {y,m,d};
   }
+  function isoToKey(iso){
+    const match = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    return ymdKey(Number(match[1]), Number(match[2]), Number(match[3]));
+  }
+  function pad2(v){ return String(v).padStart(2, "0"); }
+  function normalizeDateRawInput(raw){
+    if (raw instanceof Date && !isNaN(raw.valueOf())){
+      return `${raw.getFullYear()}/${pad2(raw.getMonth()+1)}/${pad2(raw.getDate())}`;
+    }
+    if (typeof raw === "number" && window.XLSX){
+      const dc = XLSX.SSF.parse_date_code(raw);
+      if (dc && dc.y && dc.m && dc.d){
+        return `${dc.y}/${pad2(dc.m)}/${pad2(dc.d)}`;
+      }
+    }
+    return normalizeText(raw);
+  }
+  function buildPerformanceDateFields(raw, opts = {}){
+    const dateRaw = normalizeDateRawInput(raw);
+    const parsed = parsePerformanceDates(dateRaw, { defaultYear: opts.defaultYear });
+    const normalizedIso = normalizeIsoDates(parsed.isoDates);
+    const displayDates = normalizedIso.map(formatDisplayDate).filter(Boolean);
+    const dateFirstIso = normalizedIso[0] || "";
+    const dateLastIso = normalizedIso.length ? normalizedIso[normalizedIso.length - 1] : "";
+    return {
+      date_raw: dateRaw,
+      dates_iso: normalizedIso,
+      date_first_iso: dateFirstIso,
+      dateText: displayDates.join(","),
+      startKey: dateFirstIso ? isoToKey(dateFirstIso) : null,
+      endKey: dateLastIso ? isoToKey(dateLastIso) : null
+    };
+  }
+  let performanceDateBackfillLogged = false;
+  function normalizePerformanceDateRecord(rec, opts = {}){
+    if (!rec) return false;
+    let updated = false;
+    if (Array.isArray(rec.dates_iso) && rec.dates_iso.length){
+      const normalizedIso = normalizeIsoDates(rec.dates_iso);
+      const displayDates = normalizedIso.map(formatDisplayDate).filter(Boolean);
+      const dateFirstIso = normalizedIso[0] || "";
+      const dateLastIso = normalizedIso.length ? normalizedIso[normalizedIso.length - 1] : "";
+      if (JSON.stringify(rec.dates_iso) !== JSON.stringify(normalizedIso)){
+        rec.dates_iso = normalizedIso;
+        updated = true;
+      }
+      if (rec.date_first_iso !== dateFirstIso){
+        rec.date_first_iso = dateFirstIso;
+        updated = true;
+      }
+      const displayText = displayDates.join(",");
+      if (rec.dateText !== displayText){
+        rec.dateText = displayText;
+        updated = true;
+      }
+      const startKey = dateFirstIso ? isoToKey(dateFirstIso) : null;
+      const endKey = dateLastIso ? isoToKey(dateLastIso) : null;
+      if (rec.startKey !== startKey || rec.endKey !== endKey){
+        rec.startKey = startKey;
+        rec.endKey = endKey;
+        updated = true;
+      }
+      if (!rec.date_raw && (rec.dateText || rec.dates_iso.length)){
+        rec.date_raw = rec.dateText || rec.dates_iso.join(",");
+        updated = true;
+      }
+      return updated;
+    }
+
+    const source = rec.date_raw ?? rec.dateText ?? "";
+    if (!source) return false;
+    const fields = buildPerformanceDateFields(source, { defaultYear: opts.defaultYear });
+    rec.date_raw = fields.date_raw;
+    rec.dates_iso = fields.dates_iso;
+    rec.date_first_iso = fields.date_first_iso;
+    rec.dateText = fields.dateText;
+    rec.startKey = fields.startKey;
+    rec.endKey = fields.endKey;
+    return true;
+  }
+  function backfillPerformanceDates(records, opts = {}){
+    if (!records) return 0;
+    let count = 0;
+    for (const rec of Object.values(records)){
+      if (normalizePerformanceDateRecord(rec, opts)) count++;
+    }
+    if (count && !performanceDateBackfillLogged){
+      console.info(`[DATES] backfilled performance dates for ${count} record(s)`);
+      performanceDateBackfillLogged = true;
+    }
+    return count;
+  }
 
   function extractYmdListFromString(text){
     const s = String(text ?? "");
@@ -1542,6 +1636,7 @@ function daysUntilKey(k){
       if (!r) continue;
       r.status = normalizeStatus(r.status);
     }
+    backfillPerformanceDates(app.recordsById, { defaultYear: nowLocal().getFullYear() });
     if (saved.ui?.tab) app.ui.tab = saved.ui.tab;
     if (saved.ui?.filter){
       app.ui.filter.fromKey = saved.ui.filter.fromKey ?? null;
@@ -1978,7 +2073,10 @@ function daysUntilKey(k){
     const venue = normalizeText(row["会場名"]);
     const memo = normalizeText(row["メモ"]);
 
-    const dateParsed = parseDateCell(row["公演日"]);
+    const dateInfo = buildPerformanceDateFields(row["公演日"], { defaultYear: nowLocal().getFullYear() });
+    if (dateInfo.date_raw){
+      console.debug(`[IMPORT] performance date raw="${dateInfo.date_raw}" iso=${dateInfo.dates_iso.length}`);
+    }
     const presaleParsed = parseDateCell(row["前売日"]);
 
     const status = normalizeStatus(row["制作状況"]);
@@ -1991,9 +2089,12 @@ function daysUntilKey(k){
       artist,
       title,
       venue,
-      dateText: dateParsed.display,
-      startKey: dateParsed.startKey,
-      endKey: dateParsed.endKey,
+      date_raw: dateInfo.date_raw,
+      dates_iso: dateInfo.dates_iso,
+      date_first_iso: dateInfo.date_first_iso,
+      dateText: dateInfo.dateText,
+      startKey: dateInfo.startKey,
+      endKey: dateInfo.endKey,
       presaleText: presaleParsed.display,
       presaleKey: presaleParsed.startKey,
       status,
@@ -2026,11 +2127,15 @@ function daysUntilKey(k){
     overwriteField("title");
     overwriteField("venue");
 
-    overwriteField("dateText");
-    if (incoming.startKey != null && incoming.endKey != null){
-      if (existing.startKey !== incoming.startKey || existing.endKey !== incoming.endKey){
-        existing.startKey = incoming.startKey;
-        existing.endKey = incoming.endKey;
+    if (Array.isArray(incoming.dates_iso) && incoming.dates_iso.length){
+      const normalizedIso = normalizeIsoDates(incoming.dates_iso);
+      if (JSON.stringify(existing.dates_iso || []) !== JSON.stringify(normalizedIso)){
+        existing.date_raw = incoming.date_raw || existing.date_raw;
+        existing.dates_iso = normalizedIso;
+        existing.date_first_iso = normalizedIso[0] || "";
+        existing.dateText = normalizedIso.map(formatDisplayDate).filter(Boolean).join(",");
+        existing.startKey = existing.date_first_iso ? isoToKey(existing.date_first_iso) : null;
+        existing.endKey = normalizedIso.length ? isoToKey(normalizedIso[normalizedIso.length - 1]) : null;
         updated = true;
       }
     }
@@ -2200,6 +2305,9 @@ function daysUntilKey(k){
       artist:"",
       title:"",
       venue:"",
+      date_raw:"",
+      dates_iso:[],
+      date_first_iso:"",
       dateText:"",
       startKey:null,
       endKey:null,
@@ -2358,10 +2466,13 @@ function daysUntilKey(k){
       rec.title = normalizeText(inputs.get("title").value);
       rec.venue = normalizeText(inputs.get("venue").value);
 
-      const dParsed = parseDateCell(inputs.get("dateText").value);
-      rec.dateText = dParsed.display || normalizeText(inputs.get("dateText").value);
-      rec.startKey = dParsed.startKey;
-      rec.endKey = dParsed.endKey;
+      const dateInfo = buildPerformanceDateFields(inputs.get("dateText").value, { defaultYear: nowLocal().getFullYear() });
+      rec.date_raw = dateInfo.date_raw;
+      rec.dates_iso = dateInfo.dates_iso;
+      rec.date_first_iso = dateInfo.date_first_iso;
+      rec.dateText = dateInfo.dateText;
+      rec.startKey = dateInfo.startKey;
+      rec.endKey = dateInfo.endKey;
 
       const pParsed = parseDateCell(inputs.get("presaleText").value);
       rec.presaleText = pParsed.display || normalizeText(inputs.get("presaleText").value);
