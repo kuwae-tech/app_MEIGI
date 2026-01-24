@@ -1258,6 +1258,40 @@
     return out;
   }
 
+  function extractMdListFromString(text, baseYear, initialMonth = null){
+    const s = normalizeText(text);
+    if (!s) return [];
+    const normalized = s.replace(/[〜～]/g, ",");
+    const parts = normalized.split(/[、,]/).map((p) => p.trim()).filter(Boolean);
+    const out = [];
+    let lastMonth = initialMonth;
+    for (const part of parts){
+      const ymdMatch = part.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+      if (ymdMatch){
+        lastMonth = Number(ymdMatch[2]);
+        continue;
+      }
+      const mdMatch = part.match(/(^|[^0-9])(\d{1,2})\s*\/\s*(\d{1,2})([^0-9]|$)/);
+      if (mdMatch){
+        const month = Number(mdMatch[2]);
+        const day = Number(mdMatch[3]);
+        if (month >= 1 && month <= 12 && day >= 1 && day <= 31){
+          lastMonth = month;
+          out.push({ y: baseYear, m: month, d: day });
+        }
+        continue;
+      }
+      const dayMatch = part.match(/(\d{1,2})/);
+      if (dayMatch && lastMonth != null){
+        const day = Number(dayMatch[1]);
+        if (day >= 1 && day <= 31){
+          out.push({ y: baseYear, m: lastMonth, d: day });
+        }
+      }
+    }
+    return out;
+  }
+
   function parseDateCell(raw){
     if (raw instanceof Date && !isNaN(raw.valueOf())){
       const k = dateToKey(raw);
@@ -1278,16 +1312,20 @@
 
     const hasRange = txt.includes("〜") || txt.includes("～");
     const list = extractYmdListFromString(txt);
+    const baseYear = (list.length ? list[list.length - 1].y : nowLocal().getFullYear());
+    const baseMonth = (list.length ? list[list.length - 1].m : null);
+    const listMd = extractMdListFromString(txt, baseYear, baseMonth);
+    const combinedList = list.length ? list.concat(listMd) : listMd;
 
-    if (hasRange && list.length >= 2){
-      const a = list[0], b = list[1];
+    if (hasRange && combinedList.length >= 2){
+      const a = combinedList[0], b = combinedList[1];
       const sk = ymdKey(a.y,a.m,a.d);
       const ek = ymdKey(b.y,b.m,b.d);
       return { startKey: sk, endKey: ek, display: `${a.m}/${a.d}〜${b.m}/${b.d}` };
     }
 
-    if (list.length >= 1){
-      const keys = list.map(x => ymdKey(x.y,x.m,x.d)).sort((a,b)=>a-b);
+    if (combinedList.length >= 1){
+      const keys = combinedList.map(x => ymdKey(x.y,x.m,x.d)).sort((a,b)=>a-b);
       const sk = keys[0];
       const ek = keys[keys.length-1];
       // display month-grouped
@@ -1741,10 +1779,10 @@ function daysUntilKey(k){
   }
 
   function classifyTab(rec){
-    // 申請なし（手入力）は常にこのタブに固定（搬入済/公演終了へ移動しない）
-    if (!rec.hasApplication) return 'manual';
-
     if (isEnded(rec)) return 'ended';
+
+    // 申請なし（手入力）は常にこのタブに固定（搬入済へ移動しない）
+    if (!rec.hasApplication) return 'manual';
 
     const logical = statusForLogic(rec.status);
     if (logical === '搬入済') return 'delivered';
@@ -1758,6 +1796,7 @@ function daysUntilKey(k){
 
   // UI上でのタブ移動を「保存/並び替え適用」まで遅延するための実タブ
   function effectiveTab(rec){
+    if (isEnded(rec)) return 'ended';
     if (app.ui.deferTabMoves && rec && rec.__pinnedTab){
       return rec.__pinnedTab;
     }
@@ -3149,13 +3188,19 @@ function daysUntilKey(k){
   function computeCounts(){
     const all = getAllRecords();
     let applied=0, manual=0, nostatus=0, delivered=0, ended=0;
+    let endedByDate = 0;
     for (const r of all){
+      if (isEnded(r)) endedByDate++;
       const t = effectiveTab(r);
       if (t==="applied") applied++;
       else if (t==="manual") manual++;
       else if (t==="nostatus") nostatus++;
       else if (t==="delivered") delivered++;
       else if (t==="ended") ended++;
+    }
+    if (computeCounts._lastEndedCount !== endedByDate){
+      console.log(`[TABS] ended=${endedByDate} (moved to 公演終了)`);
+      computeCounts._lastEndedCount = endedByDate;
     }
     $("cntApplied").textContent = applied;
     $("cntManual").textContent = manual;
