@@ -166,18 +166,10 @@
     const passwordInput = $('loginPasswordInput');
     const loginBtn = $('loginBtn');
     const logoutBtn = $('logoutBtn');
-    const helpText = $('loginHelpText');
-
     if (emailInput) emailInput.disabled = isLoggedIn;
     if (passwordInput) passwordInput.disabled = isLoggedIn;
     if (loginBtn) loginBtn.disabled = isLoggedIn;
     if (logoutBtn) logoutBtn.disabled = !isLoggedIn;
-
-    if (helpText) {
-      helpText.textContent = isLoggedIn
-        ? 'ログアウトするまでログイン情報は変更できません。'
-        : 'ログインIDの場合、管理者がIDで招待している必要があります。';
-    }
 
     if (isLoggedIn) {
       setLoginStatus(getPreferredLoginLabel());
@@ -955,7 +947,7 @@ end $$;`;
       const input = val('loginEmailInput');
       const password = $('loginPasswordInput')?.value || '';
       if (!input || !password) {
-        setLoginError('ログインに失敗しました（メール/IDまたはパスワードを確認してください）。');
+        setLoginError('ログインに失敗しました（ログインIDまたはパスワードを確認してください）。');
         return;
       }
       const isEmail = input.includes('@');
@@ -974,7 +966,7 @@ end $$;`;
       const { error } = await client.auth.signInWithPassword({ email, password });
       if (error) {
         const message = error?.message || error;
-        setLoginError('ログインに失敗しました（メール/IDまたはパスワードを確認してください）。');
+        setLoginError('ログインに失敗しました（ログインIDまたはパスワードを確認してください）。');
         log(TAGS.auth, `signIn failed ${message}`, error);
         return;
       }
