@@ -98,7 +98,41 @@ const escapeHtml = (value) => String(value ?? '')
   .replaceAll("'", '&#39;');
 
 const buildExportHtml = ({ title, meta, columns, rows, columnKeys, statusColorMap, statusRowKeys, dateHighlightMap, dateHighlightLevels }) => {
-  const headerCells = columns.map((label) => `<th>${escapeHtml(label)}</th>`).join('');
+  const columnClassMap = {
+    status: 'col-status',
+    dateText: 'col-date',
+    artist: 'col-artist',
+    title: 'col-title',
+    venue: 'col-venue',
+    presale: 'col-presale',
+    company: 'col-company',
+    person: 'col-person',
+    memo: 'col-memo'
+  };
+  const columnWidthMap = {
+    status: '85px',
+    dateText: '85px',
+    artist: '120px',
+    title: '180px',
+    venue: '120px',
+    presale: '85px',
+    company: '130px',
+    person: '90px',
+    memo: 'auto'
+  };
+  const headerCells = columns.map((label, index) => {
+    const key = Array.isArray(columnKeys) ? columnKeys[index] : null;
+    const className = key && columnClassMap[key] ? ` class="${escapeHtml(columnClassMap[key])}"` : '';
+    return `<th${className}>${escapeHtml(label)}</th>`;
+  }).join('');
+  const colgroup = Array.isArray(columnKeys) && columnKeys.length
+    ? `<colgroup>${columnKeys.map((key) => {
+      const className = columnClassMap[key] ? ` class="${escapeHtml(columnClassMap[key])}"` : '';
+      const width = columnWidthMap[key];
+      const style = width ? ` style="width:${escapeHtml(width)}"` : '';
+      return `<col${className}${style}>`;
+    }).join('')}</colgroup>`
+    : '';
   const statusColIndex = Array.isArray(columnKeys) ? columnKeys.indexOf('status') : -1;
   const dateColIndex = Array.isArray(columnKeys) ? columnKeys.indexOf('dateText') : -1;
   const statusStyles = statusColorMap && typeof statusColorMap === 'object'
@@ -119,6 +153,8 @@ const buildExportHtml = ({ title, meta, columns, rows, columnKeys, statusColorMa
     const dateLevel = Array.isArray(dateHighlightLevels) ? dateHighlightLevels[rowIndex] : null;
     const cells = row.map((cell, colIndex) => {
       const classNames = [];
+      const key = Array.isArray(columnKeys) ? columnKeys[colIndex] : null;
+      if (key && columnClassMap[key]) classNames.push(columnClassMap[key]);
       if (colIndex === statusColIndex && statusKey){
         classNames.push('status-cell', `status-cell-${statusKey}`);
       }
@@ -169,7 +205,7 @@ const buildExportHtml = ({ title, meta, columns, rows, columnKeys, statusColorMa
     table {
       width: 100%;
       border-collapse: collapse;
-      table-layout: auto;
+      table-layout: fixed;
       font-size: 10.5px;
     }
     th, td {
@@ -178,6 +214,12 @@ const buildExportHtml = ({ title, meta, columns, rows, columnKeys, statusColorMa
       vertical-align: top;
       word-break: break-word;
       word-wrap: break-word;
+    }
+    .col-status {
+      white-space: nowrap;
+      word-break: keep-all;
+      overflow-wrap: normal;
+      line-height: 1.2;
     }
     .status-cell {
       font-weight: 600;
@@ -200,6 +242,7 @@ const buildExportHtml = ({ title, meta, columns, rows, columnKeys, statusColorMa
     <div class="title">${escapeHtml(title || '名義SPOT管理')}</div>
     <div class="meta">${metaHtml}</div>
     <table>
+      ${colgroup}
       <thead>
         <tr>${headerCells}</tr>
       </thead>

@@ -604,6 +604,9 @@ end $$;`;
       const rec = app.recordsById[id];
       if (rec && rec.status) rec.status = normalizeStatus(rec.status);
     }
+    if (typeof backfillPerformanceDates === 'function') {
+      backfillPerformanceDates(app.recordsById, { defaultYear: new Date().getFullYear() });
+    }
     if (currentUi) app.ui = currentUi;
     render();
     log(TAGS.share, `loaded station=${station}`);
@@ -731,6 +734,9 @@ end $$;`;
     for (const id of Object.keys(app.recordsById)) {
       const rec = app.recordsById[id];
       if (rec && rec.status) rec.status = normalizeStatus(rec.status);
+    }
+    if (typeof backfillPerformanceDates === 'function') {
+      backfillPerformanceDates(app.recordsById, { defaultYear: new Date().getFullYear() });
     }
     if (typeof undoStack !== 'undefined') {
       undoStack.length = 0;
