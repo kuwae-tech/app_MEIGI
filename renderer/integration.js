@@ -947,7 +947,7 @@ end $$;`;
       const input = val('loginEmailInput');
       const password = $('loginPasswordInput')?.value || '';
       if (!input || !password) {
-        setLoginError('ログインに失敗しました（ログインIDまたはパスワードを確認してください）。');
+        setLoginError('ログインに失敗しました（ログインIDとパスワードを確認してください）。');
         return;
       }
       const isEmail = input.includes('@');
@@ -966,7 +966,7 @@ end $$;`;
       const { error } = await client.auth.signInWithPassword({ email, password });
       if (error) {
         const message = error?.message || error;
-        setLoginError('ログインに失敗しました（ログインIDまたはパスワードを確認してください）。');
+        setLoginError('ログインに失敗しました（ログインIDとパスワードを確認してください）。');
         log(TAGS.auth, `signIn failed ${message}`, error);
         return;
       }
