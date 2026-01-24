@@ -28,6 +28,11 @@
     supabaseUrl: '',
     supabaseAnonKey: '',
     shareEnabled: false,
+    auth: {
+      pseudoEmailDomain: 'meigi.local',
+      lastLoginId: '',
+      lastLoginType: ''
+    },
     notify: {
       mode: 'weekly',
       thresholdDays: 14,
@@ -118,6 +123,70 @@
   const setLoginStatus = (text) => {
     const pill = $('loginUserPill');
     if (pill) pill.textContent = text;
+  };
+
+  const setLoginError = (message) => {
+    const el = $('loginErrorText');
+    if (!el) return;
+    if (message) {
+      el.textContent = message;
+      el.style.display = '';
+    } else {
+      el.textContent = '';
+      el.style.display = 'none';
+    }
+  };
+
+  const getPseudoEmailDomain = () => settings?.auth?.pseudoEmailDomain || defaultSettings.auth.pseudoEmailDomain;
+
+  const normalizeLoginId = (value) => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return { error: 'ログインIDを入力してください。' };
+    if (normalized.includes('@')) return { error: 'ログインIDに「@」は使用できません。' };
+    if (!/^[a-z0-9._-]+$/.test(normalized)) {
+      return { error: 'ログインIDは英数字と「.」「_」「-」のみ使用できます。' };
+    }
+    return { value: normalized };
+  };
+
+  const getPreferredLoginLabel = () => {
+    const lastLoginType = settings?.auth?.lastLoginType;
+    const lastLoginId = settings?.auth?.lastLoginId;
+    if (lastLoginType === 'id' && lastLoginId) {
+      return `ログイン中: ログインID: ${lastLoginId}`;
+    }
+    if (displayName) return `ログイン中: ${displayName}`;
+    if (session?.user?.email) return `ログイン中: ${session.user.email}`;
+    return 'ログイン中';
+  };
+
+  const updateAuthUI = (nextSession) => {
+    const isLoggedIn = !!nextSession;
+    const emailInput = $('loginEmailInput');
+    const passwordInput = $('loginPasswordInput');
+    const loginBtn = $('loginBtn');
+    const logoutBtn = $('logoutBtn');
+    const helpText = $('loginHelpText');
+
+    if (emailInput) emailInput.disabled = isLoggedIn;
+    if (passwordInput) passwordInput.disabled = isLoggedIn;
+    if (loginBtn) loginBtn.disabled = isLoggedIn;
+    if (logoutBtn) logoutBtn.disabled = !isLoggedIn;
+
+    if (helpText) {
+      helpText.textContent = isLoggedIn
+        ? 'ログアウトするまでログイン情報は変更できません。'
+        : 'ログインIDの場合、管理者がIDで招待している必要があります。';
+    }
+
+    if (isLoggedIn) {
+      setLoginStatus(getPreferredLoginLabel());
+      setLoginError('');
+      log(TAGS.auth, 'ui state -> loggedIn');
+    } else {
+      setLoginStatus('未ログイン');
+      log(TAGS.auth, 'ui state -> loggedOut');
+    }
   };
 
   const updateNotifyFieldsVisibility = () => {
@@ -296,7 +365,8 @@
       displayName = null;
       currentEditingRecordId = null;
       presenceEditors = new Map();
-      setLoginStatus('未ログイン');
+      log(TAGS.auth, 'signed out');
+      updateAuthUI(null);
       setShareStatus('未ログイン', false);
       if (presenceChannel) {
         presenceChannel.unsubscribe();
@@ -308,7 +378,7 @@
 
     log(TAGS.auth, `session ok user=${session.user.id}`);
     displayName = await ensureDisplayName();
-    setLoginStatus(displayName ? `ログイン中: ${displayName}` : `ログイン中: ${session.user.email}`);
+    updateAuthUI(session);
     setShareStatus('接続中', true);
     await joinPresence(getCurrentStation());
     await loadSharedStation(getCurrentStation());
@@ -877,25 +947,67 @@ end $$;`;
     });
 
     on('loginBtn', 'click', async () => {
-      await ensureSupabaseClient();
-      const email = val('loginEmailInput');
-      const password = $('loginPasswordInput')?.value || '';
-      if (!email || !password) {
-        alert('メールとパスワードを入力してください。');
+      const client = await ensureSupabaseClient();
+      if (!client) {
+        setLoginError('Supabase設定が未完了です。');
         return;
       }
-      const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      const input = val('loginEmailInput');
+      const password = $('loginPasswordInput')?.value || '';
+      if (!input || !password) {
+        setLoginError('ログインに失敗しました（メール/IDまたはパスワードを確認してください）。');
+        return;
+      }
+      const isEmail = input.includes('@');
+      let email = input;
+      let loginType = 'email';
+      if (!isEmail) {
+        const { value, error } = normalizeLoginId(input);
+        if (error) {
+          setLoginError(error);
+          return;
+        }
+        loginType = 'id';
+        email = `${value}@${getPseudoEmailDomain()}`;
+      }
+      log(TAGS.auth, `signIn start type=${loginType}`);
+      const { error } = await client.auth.signInWithPassword({ email, password });
       if (error) {
-        alert('ログインに失敗しました。');
-        log(TAGS.auth, 'login failed', error);
+        const message = error?.message || error;
+        setLoginError('ログインに失敗しました（メール/IDまたはパスワードを確認してください）。');
+        log(TAGS.auth, `signIn failed ${message}`, error);
+        return;
+      }
+      setLoginError('');
+      if (loginType === 'id') {
+        const normalized = normalizeLoginId(input);
+        if (normalized.value) {
+          await updateSettings({
+            auth: {
+              ...settings.auth,
+              lastLoginId: normalized.value,
+              lastLoginType: 'id'
+            }
+          });
+        }
+      } else {
+        await updateSettings({
+          auth: {
+            ...settings.auth,
+            lastLoginId: '',
+            lastLoginType: 'email'
+          }
+        });
       }
     });
 
     on('logoutBtn', 'click', async () => {
       if (!supabaseClient) return;
       await supabaseClient.auth.signOut();
-      log(TAGS.auth, 'signed out');
     });
+
+    on('loginEmailInput', 'input', () => setLoginError(''));
+    on('loginPasswordInput', 'input', () => setLoginError(''));
 
     on('supabaseCopySqlBtn', 'click', async () => {
       try {
@@ -1010,7 +1122,10 @@ end $$;`;
 
   const initAuthState = async () => {
     const client = await ensureSupabaseClient();
-    if (!client) return;
+    if (!client) {
+      updateAuthUI(null);
+      return;
+    }
     const { data } = await client.auth.getSession();
     await handleSession(data.session);
   };
