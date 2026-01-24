@@ -21,6 +21,28 @@ const defaultSettings = {
   }
 };
 
+let supabaseDefaultsPromise = null;
+const loadSupabaseDefaults = async () => {
+  if (!supabaseDefaultsPromise) {
+    supabaseDefaultsPromise = (async () => {
+      try {
+        const filePath = path.join(__dirname, '..', '..', 'assets', 'supabase.default.json');
+        const raw = await fs.readFile(filePath, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        return {
+          url: typeof parsed.url === 'string' ? parsed.url.trim() : '',
+          anonKey: typeof parsed.anonKey === 'string' ? parsed.anonKey.trim() : ''
+        };
+      } catch (error) {
+        console.warn('[SETTINGS] supabase default load failed', error?.message || error);
+        return null;
+      }
+    })();
+  }
+  return supabaseDefaultsPromise;
+};
+
 const store = new Store({
   name: 'meigi-spot-settings',
   defaults: {
@@ -40,9 +62,15 @@ const deepMerge = (base, next) => {
   return out;
 };
 
-const getSettings = () => {
+const getSettings = async () => {
   const stored = store.get('settings');
-  return deepMerge(defaultSettings, stored);
+  const settings = deepMerge(defaultSettings, stored);
+  const defaults = await loadSupabaseDefaults();
+  if (defaults) {
+    if (!settings.supabaseUrl && defaults.url) settings.supabaseUrl = defaults.url;
+    if (!settings.supabaseAnonKey && defaults.anonKey) settings.supabaseAnonKey = defaults.anonKey;
+  }
+  return settings;
 };
 
 const getLogs = () => {
@@ -220,17 +248,17 @@ const cleanupBackups = async (retentionDays) => {
 };
 
 const registerIpc = () => {
-  ipcMain.handle('settings:get', () => getSettings());
-  ipcMain.handle('settings:set', (_event, next) => {
-    const merged = deepMerge(getSettings(), next);
-    store.set('settings', merged);
-    return merged;
-  });
-  ipcMain.handle('settings:update', (_event, next) => {
-    const merged = deepMerge(getSettings(), next);
-    store.set('settings', merged);
-    return merged;
-  });
+ipcMain.handle('settings:get', async () => getSettings());
+ipcMain.handle('settings:set', async (_event, next) => {
+  const merged = deepMerge(await getSettings(), next);
+  store.set('settings', merged);
+  return merged;
+});
+ipcMain.handle('settings:update', async (_event, next) => {
+  const merged = deepMerge(await getSettings(), next);
+  store.set('settings', merged);
+  return merged;
+});
   ipcMain.handle('logs:get', () => getLogs());
   ipcMain.handle('logs:set', (_event, next) => setLogs(next));
 

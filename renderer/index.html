@@ -527,6 +527,7 @@
     .backupItem:last-child{border-bottom:none}
     .backupItem.selected{background:#eef6ff;border-radius:8px}
     .lockTag{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:999px;background:rgba(255,149,0,.12);color:#8a4b00;border:1px solid rgba(255,149,0,.2);font-size:10px;margin-left:6px}
+    .setupSql{white-space:pre-wrap;background:#f6f6f6;border:1px solid #e2e2e2;border-radius:8px;padding:8px;font-size:11px;max-height:220px;overflow:auto}
 
 
     mark.hl{
@@ -678,6 +679,16 @@
           </label>
           <span class="pill" id="shareStatusPill">未接続</span>
         </div>
+        <div class="fieldRow" id="supabaseSetupNotice" style="display:none">
+          <label>DBセットアップ</label>
+          <div>
+            <div class="hintText" data-role="message">DBセットアップが必要です。</div>
+            <pre class="setupSql" id="supabaseSetupSql"></pre>
+            <div class="inlineFields">
+              <button class="btn btnGhost" id="supabaseCopySqlBtn">SQLをコピー</button>
+            </div>
+          </div>
+        </div>
         <div class="divider"></div>
         <div class="fieldRow">
           <label>ログイン</label>
@@ -691,7 +702,14 @@
         <div class="inlineFields">
           <span class="pill" id="loginUserPill">未ログイン</span>
         </div>
-        <div class="hintText">招待されていないユーザーは利用できません。</div>
+        <div class="divider"></div>
+        <div class="fieldRow">
+          <label>ローカル初期化</label>
+          <div class="inlineFields">
+            <button class="btn btnGhost" id="supabaseResetBtn">ローカル初期化→同期</button>
+            <span class="hintText">ローカルデータのみ消去し、クラウドを再読み込みします。</span>
+          </div>
+        </div>
       </div>
 
       <div class="settingsSection" id="settingsNotify">

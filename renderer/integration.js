@@ -11,7 +11,7 @@
     auth: 'AUTH',
     share: 'SHARE',
     presence: 'PRESENCE',
-    lock: 'LOCK',
+    reset: 'RESET',
     backup: 'BACKUP',
     notify: 'NOTIFY'
   };
@@ -75,13 +75,12 @@
   let supabaseAuthSub = null;
   let session = null;
   let presenceChannel = null;
-  let lockRefreshTimer = null;
-  let lockExtendTimer = null;
   let notifyTimer = null;
   let notifyInterval = null;
-  let currentLock = null;
-  let locksById = new Map();
   let displayName = null;
+  let presenceEditors = new Map();
+  let currentEditingRecordId = null;
+  let schemaErrorNotified = false;
   let selectedBackups = { '802': null, 'COCOLO': null };
 
   const LOG_RETENTION_DAYS = 7;
@@ -285,16 +284,8 @@
       presenceChannel.unsubscribe();
       presenceChannel = null;
     }
-    if (lockRefreshTimer) {
-      clearInterval(lockRefreshTimer);
-      lockRefreshTimer = null;
-    }
-    if (lockExtendTimer) {
-      clearInterval(lockExtendTimer);
-      lockExtendTimer = null;
-    }
-    currentLock = null;
-    locksById.clear();
+    presenceEditors = new Map();
+    currentEditingRecordId = null;
     updateOnlinePill([]);
     setShareStatus('共有OFF', false);
   };
@@ -303,6 +294,8 @@
     session = nextSession;
     if (!session) {
       displayName = null;
+      currentEditingRecordId = null;
+      presenceEditors = new Map();
       setLoginStatus('未ログイン');
       setShareStatus('未ログイン', false);
       if (presenceChannel) {
@@ -314,56 +307,26 @@
     }
 
     log(TAGS.auth, `session ok user=${session.user.id}`);
-    const allowed = await checkAllowedUser();
-    if (!allowed) {
-      alert('招待されていません。管理者に連絡してください。');
-      await supabaseClient.auth.signOut();
-      return;
-    }
-
     displayName = await ensureDisplayName();
     setLoginStatus(displayName ? `ログイン中: ${displayName}` : `ログイン中: ${session.user.email}`);
     setShareStatus('接続中', true);
     await joinPresence(getCurrentStation());
     await loadSharedStation(getCurrentStation());
-    startLockRefresh();
-  };
-
-  const checkAllowedUser = async () => {
-    const { data, error } = await supabaseClient
-      .from('allowed_users')
-      .select('role')
-      .eq('user_id', session.user.id)
-      .maybeSingle();
-    if (error) {
-      log(TAGS.auth, `allowed_users check failed`, error);
-      return false;
-    }
-    return !!data;
   };
 
   const ensureDisplayName = async () => {
-    const { data, error } = await supabaseClient
-      .from('profiles')
-      .select('display_name')
-      .eq('user_id', session.user.id)
-      .maybeSingle();
-    if (error) {
-      log(TAGS.auth, 'profiles fetch failed', error);
-      return null;
-    }
-    if (data?.display_name) return data.display_name;
-
+    const metadataName = session?.user?.user_metadata?.display_name;
+    if (metadataName) return metadataName;
     const name = await promptDisplayName();
     if (!name) return null;
-    const { error: upsertError } = await supabaseClient
-      .from('profiles')
-      .upsert({ user_id: session.user.id, display_name: name }, { onConflict: 'user_id' });
-    if (upsertError) {
-      log(TAGS.auth, 'display_name save failed', upsertError);
+    const { data, error } = await supabaseClient.auth.updateUser({ data: { display_name: name } });
+    if (error) {
+      log(TAGS.auth, 'display_name save failed', error);
       return null;
     }
-    return name;
+    const updatedName = data?.user?.user_metadata?.display_name || name;
+    log(TAGS.auth, `display_name updated ${updatedName}`);
+    return updatedName;
   };
 
   const promptDisplayName = () => {
@@ -422,12 +385,23 @@
     channel.on('presence', { event: 'sync' }, () => {
       const state = channel.presenceState();
       const names = [];
+      const editors = new Map();
       Object.values(state).forEach((entries) => {
         entries.forEach((entry) => {
-          if (entry.display_name) names.push(entry.display_name);
+          if (entry.displayName) names.push(entry.displayName);
+          if (entry.editing) {
+            const existing = editors.get(entry.editing) || [];
+            existing.push({
+              userId: entry.userId,
+              displayName: entry.displayName || entry.userId
+            });
+            editors.set(entry.editing, existing);
+          }
         });
       });
+      presenceEditors = editors;
       updateOnlinePill(names);
+      applyLockIndicators();
     });
 
     channel.subscribe(async (status) => {
@@ -441,18 +415,111 @@
 
   const buildPresencePayload = (station) => {
     return {
-      user_id: session?.user?.id || 'unknown',
-      display_name: displayName || session?.user?.email || 'unknown',
+      userId: session?.user?.id || 'unknown',
+      displayName: displayName || session?.user?.email || 'unknown',
       station,
-      viewing_record_id: null,
-      editing_record_id: currentLock?.recordId || null,
-      updated_at: new Date().toISOString()
+      editing: currentEditingRecordId
     };
   };
 
   const updatePresenceTrack = async () => {
     if (!presenceChannel) return;
     await presenceChannel.track(buildPresencePayload(getCurrentStation()));
+  };
+
+  const SETUP_SQL = `-- station_data の最小セットアップ（idempotent）
+create table if not exists public.station_data (
+  station text,
+  records_json jsonb,
+  updated_at timestamptz,
+  updated_by uuid
+);
+
+alter table public.station_data
+  add column if not exists station text,
+  add column if not exists records_json jsonb,
+  add column if not exists updated_at timestamptz,
+  add column if not exists updated_by uuid;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'station_data_pkey'
+  ) then
+    alter table public.station_data
+      add constraint station_data_pkey primary key (station);
+  end if;
+end $$;
+
+alter table public.station_data enable row level security;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'station_data'
+      and policyname = 'station_data_authenticated'
+  ) then
+    create policy station_data_authenticated
+      on public.station_data
+      for all
+      to authenticated
+      using (true)
+      with check (true);
+  end if;
+end $$;`;
+
+  const showSetupNotice = (reason) => {
+    const notice = $('supabaseSetupNotice');
+    if (!notice) return;
+    const message = reason ? `DBセットアップが必要です: ${reason}` : 'DBセットアップが必要です。';
+    notice.querySelector('[data-role="message"]').textContent = message;
+    notice.style.display = '';
+    const sqlBox = notice.querySelector('pre');
+    if (sqlBox) sqlBox.textContent = SETUP_SQL;
+  };
+
+  const hideSetupNotice = () => {
+    const notice = $('supabaseSetupNotice');
+    if (notice) notice.style.display = 'none';
+  };
+
+  const describeSchemaError = (error) => {
+    const message = error?.message || error?.details || '';
+    const code = error?.code || '';
+    if (code === 'PGRST205' || message.includes('column')) return '必要な列が不足しています。';
+    if (code === '42703') return '指定列が存在しません。';
+    if (code === '42P01' || message.includes('station_data')) return 'station_data テーブルが存在しません。';
+    if (code === '42501') return '権限が不足しています。';
+    return message || 'スキーマが未設定です。';
+  };
+
+  const isSchemaError = (error) => {
+    if (!error) return false;
+    const code = error?.code || '';
+    const message = error?.message || '';
+    return ['PGRST205', '42703', '42P01', '42501'].includes(code)
+      || message.includes('station_data')
+      || message.includes('column');
+  };
+
+  const handleStationDataError = (error, action) => {
+    if (!error) return false;
+    if (!isSchemaError(error)) {
+      log(TAGS.share, `station_data error ${action}: ${error.message || error}`, error);
+      return false;
+    }
+    const reason = describeSchemaError(error);
+    const code = error?.code ? `code=${error.code}` : 'code=unknown';
+    log(TAGS.share, `station_data error ${action} ${code} ${reason}`, error);
+    showSetupNotice(reason);
+    if (!schemaErrorNotified) {
+      schemaErrorNotified = true;
+      alert('Supabase のDBセットアップが必要です。設定画面のSQLを確認してください。');
+    }
+    return true;
   };
 
   const loadSharedStation = async (station) => {
@@ -463,9 +530,10 @@
       .eq('station', station)
       .maybeSingle();
     if (error) {
-      log(TAGS.share, `load failed station=${station}`, error);
+      handleStationDataError(error, `load station=${station}`);
       return;
     }
+    hideSetupNotice();
     if (!data?.records_json) return;
 
     const currentUi = app?.ui ? { ...app.ui } : null;
@@ -477,102 +545,6 @@
     if (currentUi) app.ui = currentUi;
     render();
     log(TAGS.share, `loaded station=${station}`);
-  };
-
-  const startLockRefresh = () => {
-    if (lockRefreshTimer) clearInterval(lockRefreshTimer);
-    lockRefreshTimer = setInterval(refreshLocks, 20000);
-    refreshLocks();
-  };
-
-  const refreshLocks = async () => {
-    if (!supabaseClient || !settings.shareEnabled || !session) return;
-    const station = getCurrentStation();
-    const { data, error } = await supabaseClient
-      .from('locks')
-      .select('*')
-      .eq('station', station);
-    if (error) {
-      log(TAGS.lock, `refresh failed station=${station}`, error);
-      return;
-    }
-    locksById = new Map();
-    (data || []).forEach((row) => {
-      locksById.set(row.record_id, row);
-    });
-    applyLockIndicators();
-  };
-
-  const hasActiveLock = (recId) => {
-    const row = locksById.get(recId);
-    if (!row) return null;
-    if (row.locked_until && new Date(row.locked_until).getTime() > Date.now()) {
-      return row;
-    }
-    return null;
-  };
-
-  const acquireLock = async (recId) => {
-    if (!supabaseClient || !settings.shareEnabled || !session) return true;
-    const station = getCurrentStation();
-    const payload = {
-      station,
-      record_id: recId,
-      locked_by: session.user.id,
-      locked_by_name: displayName || session.user.email || 'unknown',
-      locked_until: new Date(Date.now() + 30000).toISOString()
-    };
-    const { error } = await supabaseClient
-      .from('locks')
-      .upsert(payload, { onConflict: 'station,record_id' });
-    if (error) {
-      await refreshLocks();
-      const row = hasActiveLock(recId);
-      if (row && row.locked_by !== session.user.id) {
-        alert(`${row.locked_by_name} が編集中です。`);
-      }
-      log(TAGS.lock, `acquire failed station=${station} id=${recId}`, error);
-      return false;
-    }
-    log(TAGS.lock, `acquire ok station=${station} id=${recId}`);
-    currentLock = { station, recordId: recId };
-    startLockExtend();
-    await updatePresenceTrack();
-    return true;
-  };
-
-  const startLockExtend = () => {
-    if (lockExtendTimer) clearInterval(lockExtendTimer);
-    lockExtendTimer = setInterval(async () => {
-      if (!currentLock) return;
-      const { station, recordId } = currentLock;
-      const { error } = await supabaseClient
-        .from('locks')
-        .update({ locked_until: new Date(Date.now() + 30000).toISOString() })
-        .eq('station', station)
-        .eq('record_id', recordId);
-      if (error) {
-        log(TAGS.lock, `extend failed station=${station} id=${recordId}`, error);
-      }
-    }, 15000);
-  };
-
-  const releaseLock = async () => {
-    if (!currentLock || !supabaseClient) return;
-    const { station, recordId } = currentLock;
-    currentLock = null;
-    if (lockExtendTimer) {
-      clearInterval(lockExtendTimer);
-      lockExtendTimer = null;
-    }
-    await supabaseClient
-      .from('locks')
-      .update({ locked_until: new Date().toISOString() })
-      .eq('station', station)
-      .eq('record_id', recordId);
-    log(TAGS.lock, `release station=${station} id=${recordId}`);
-    await updatePresenceTrack();
-    refreshLocks();
   };
 
   const applyLockIndicators = () => {
@@ -587,11 +559,14 @@
       if (!statusCell) return;
       const existing = statusCell.querySelector('.lockTag');
       if (existing) existing.remove();
-      const rowLock = hasActiveLock(recId);
-      if (rowLock && rowLock.locked_by !== session?.user?.id) {
+      const editors = presenceEditors.get(recId) || [];
+      const others = editors.filter((entry) => entry.userId !== session?.user?.id);
+      if (others.length) {
         const tag = document.createElement('span');
         tag.className = 'lockTag';
-        tag.textContent = `${rowLock.locked_by_name} が編集中`;
+        const names = others.map((entry) => entry.displayName || entry.userId).filter(Boolean);
+        const label = names.length ? names.join(', ') : '他のユーザー';
+        tag.textContent = `${label} が編集中`;
         statusCell.appendChild(tag);
       }
     });
@@ -638,8 +613,9 @@
         .from('station_data')
         .upsert(payload, { onConflict: 'station' });
       if (error) {
-        log(TAGS.share, `save failed station=${station}`, error);
+        handleStationDataError(error, `save station=${station}`);
       } else {
+        hideSetupNotice();
         log(TAGS.share, `save ok station=${station}`);
       }
     }
@@ -891,10 +867,11 @@
       const { error } = await client.from('station_data').select('station').limit(1);
       if (error) {
         setShareStatus('接続失敗', false);
-        log(TAGS.share, `connection failed: ${error.message || error}`, error);
+        handleStationDataError(error, 'connection test');
         alert(`接続に失敗しました: ${error.message || error}`);
       } else {
         setShareStatus('接続OK', true);
+        hideSetupNotice();
         log(TAGS.share, 'connection ok');
       }
     });
@@ -918,6 +895,73 @@
       if (!supabaseClient) return;
       await supabaseClient.auth.signOut();
       log(TAGS.auth, 'signed out');
+    });
+
+    on('supabaseCopySqlBtn', 'click', async () => {
+      try {
+        await navigator.clipboard.writeText(SETUP_SQL);
+        log(TAGS.share, 'setup sql copied');
+        alert('SQLをコピーしました。');
+      } catch (error) {
+        log(TAGS.share, 'setup sql copy failed', error);
+        alert('SQLのコピーに失敗しました。');
+      }
+    });
+
+    on('supabaseResetBtn', 'click', async () => {
+      const ok = confirm('ローカルのデータを初期化してクラウドの内容を読み直します。実行しますか？');
+      if (!ok) return;
+      log(TAGS.reset, 'reset start');
+      try {
+        if (typeof undoStack !== 'undefined') {
+          undoStack.length = 0;
+        }
+        if (typeof redoStack !== 'undefined') {
+          redoStack.length = 0;
+        }
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem('meigi.station');
+        }
+        if (typeof openDB === 'function') {
+          const db = await openDB();
+          const tx = db.transaction('state', 'readwrite');
+          const store = tx.objectStore('state');
+          await Promise.all([
+            new Promise((resolve) => {
+              const req = store.delete('app:802');
+              req.onsuccess = () => resolve();
+              req.onerror = () => resolve();
+            }),
+            new Promise((resolve) => {
+              const req = store.delete('app:COCOLO');
+              req.onsuccess = () => resolve();
+              req.onerror = () => resolve();
+            })
+          ]);
+        }
+        if (typeof app !== 'undefined') {
+          app.recordsById = {};
+        }
+        if (typeof stationCache !== 'undefined') {
+          stationCache.clear();
+        }
+        if (typeof markDirty === 'function') {
+          markDirty(false);
+        }
+        if (typeof render === 'function') {
+          render();
+        }
+        if (!settings.shareEnabled || !supabaseClient || !session) {
+          alert('共有が有効化されていないため、クラウド同期は実行できません。');
+          log(TAGS.reset, 'sync skipped: share disabled or not logged in');
+          return;
+        }
+        await loadSharedStation(getCurrentStation());
+        log(TAGS.reset, 'reset done');
+      } catch (error) {
+        log(TAGS.reset, 'reset failed', error);
+        alert('ローカル初期化に失敗しました。');
+      }
     });
 
     on('notifyThreshold', 'change', async (e) => {
@@ -987,10 +1031,8 @@
     if (!window.openManualEditModal) return;
     const original = window.openManualEditModal;
     window.openManualEditModal = async (recId, ...rest) => {
-      if (settings.shareEnabled && supabaseClient && session) {
-        const ok = await acquireLock(recId);
-        if (!ok) return;
-      }
+      currentEditingRecordId = recId;
+      await updatePresenceTrack();
       original(recId, ...rest);
     };
 
@@ -998,7 +1040,8 @@
       const closeOriginal = window.closeModal;
       window.closeModal = () => {
         closeOriginal();
-        releaseLock();
+        currentEditingRecordId = null;
+        updatePresenceTrack();
       };
     }
   };
@@ -1018,9 +1061,10 @@
     window.switchStation = async (...args) => {
       await original(...args);
       if (settings.shareEnabled && supabaseClient && session) {
+        currentEditingRecordId = null;
         await joinPresence(getCurrentStation());
         await loadSharedStation(getCurrentStation());
-        refreshLocks();
+        applyLockIndicators();
       }
     };
   };
