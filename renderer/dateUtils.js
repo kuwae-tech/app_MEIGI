@@ -35,9 +35,10 @@
 
   const buildDateDisplay = (datesIso, fallbackText = '') => {
     const normalized = normalizeIsoDates(datesIso);
-    const fullText = normalized.length
-      ? normalized.map(formatDisplayDate).filter(Boolean).join(',')
+    const baseFullText = normalized.length
+      ? normalized.map(formatDisplayDate).filter(Boolean).join(', ')
       : String(fallbackText || '');
+    const fullText = baseFullText.replace(/\s*→\s*/g, ' → ');
 
     if (!normalized.length) {
       return { isCompact: false, year: '', md: '', fullText };
@@ -63,7 +64,7 @@
       }
     }
 
-    return { isCompact: true, year, md: mdParts.join(','), fullText };
+    return { isCompact: true, year, md: mdParts.join(', '), fullText };
   };
 
   const parsePerformanceDates = (raw, opts = {}) => {
