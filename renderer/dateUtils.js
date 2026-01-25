@@ -33,6 +33,40 @@
     return `${match[1]}/${match[2]}/${match[3]}`;
   };
 
+  const buildDateDisplay = (datesIso, fallbackText = '') => {
+    const normalized = normalizeIsoDates(datesIso);
+    const baseFullText = normalized.length
+      ? normalized.map(formatDisplayDate).filter(Boolean).join(', ')
+      : String(fallbackText || '');
+    const fullText = baseFullText.replace(/\s*→\s*/g, ' → ');
+
+    if (!normalized.length) {
+      return { isCompact: false, year: '', md: '', fullText };
+    }
+
+    const years = new Set(normalized.map((iso) => iso.slice(0, 4)));
+    if (years.size !== 1) {
+      return { isCompact: false, year: '', md: '', fullText };
+    }
+
+    const year = normalized[0].slice(0, 4);
+    const mdParts = [];
+    let lastMonth = null;
+
+    for (const iso of normalized) {
+      const month = iso.slice(5, 7);
+      const day = iso.slice(8, 10);
+      if (lastMonth === month) {
+        mdParts.push(day);
+      } else {
+        mdParts.push(`${month}/${day}`);
+        lastMonth = month;
+      }
+    }
+
+    return { isCompact: true, year, md: mdParts.join(', '), fullText };
+  };
+
   const parsePerformanceDates = (raw, opts = {}) => {
     const text = String(raw ?? '').replace(/\u3000/g, ' ').trim();
     if (!text) return { isoDates: [], displayDates: [] };
@@ -87,6 +121,7 @@
     parsePerformanceDates,
     normalizeIsoDates,
     formatDisplayDate,
+    buildDateDisplay,
     toIsoDate
   };
 

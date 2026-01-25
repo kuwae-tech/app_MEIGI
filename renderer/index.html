@@ -315,6 +315,9 @@
     /* Date alerts */
     .dateAlertRed{background:var(--date-alert-red-bg)}
     .dateAlertYellow{background:var(--date-alert-yellow-bg)}
+    .date-cell{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+    .date-year{white-space:nowrap;flex:0 0 auto;font-size:11px;color:#6b7280}
+    .date-md{white-space:normal;overflow-wrap:anywhere;word-break:break-word;font-size:13px;font-weight:600;line-height:1.2}
 
     /* Status popover (inline picker) */
     .statusPopover{
@@ -3398,10 +3401,7 @@ function daysUntilKey(k){
       tr.appendChild(tdSt);
 
       // 公演日
-      const tdDate = tdWrap(rec.dateText || "", true);
-      const lvl = dateAlertLevel(rec);
-      if (lvl === "red") tdDate.classList.add("dateAlertRed");
-      if (lvl === "yellow") tdDate.classList.add("dateAlertYellow");
+      const tdDate = buildDateCell(rec);
       tr.appendChild(tdDate);
 
       // アーティスト名
@@ -3471,6 +3471,68 @@ const memoBtn = document.createElement("button");
       tr.appendChild(tdDel);
 tbody.appendChild(tr);
     }
+  }
+
+  function appendHighlightedText(target, text){
+    const q = (app?.ui?.filter?.keyword || "").trim();
+    if (!q){
+      target.textContent = text;
+      return;
+    }
+
+    // Highlight (case-insensitive) without regex
+    const s = String(text ?? "");
+    const sLow = s.toLowerCase();
+    const qLow = q.toLowerCase();
+
+    let i = 0;
+    while (true){
+      const j = sLow.indexOf(qLow, i);
+      if (j === -1){
+        target.appendChild(document.createTextNode(s.slice(i)));
+        break;
+      }
+      if (j > i) target.appendChild(document.createTextNode(s.slice(i, j)));
+      const m = document.createElement("mark");
+      m.className = "hl";
+      m.textContent = s.slice(j, j + q.length);
+      target.appendChild(m);
+      i = j + q.length;
+      if (i >= s.length) break;
+    }
+  }
+
+  function buildDateCell(rec){
+    const display = buildDateDisplay(rec.dates_iso || [], rec.dateText || "");
+    let td;
+
+    if (display.isCompact && display.year && display.md){
+      td = document.createElement("td");
+      td.classList.add("muted");
+      const wrap = document.createElement("div");
+      wrap.className = "date-cell";
+      wrap.title = display.fullText || "";
+
+      const year = document.createElement("span");
+      year.className = "date-year";
+      appendHighlightedText(year, display.year);
+
+      const md = document.createElement("span");
+      md.className = "date-md";
+      appendHighlightedText(md, display.md);
+
+      wrap.appendChild(year);
+      wrap.appendChild(md);
+      td.appendChild(wrap);
+    } else {
+      td = tdWrap(display.fullText || "", true);
+      if (display.fullText) td.title = display.fullText;
+    }
+
+    const lvl = dateAlertLevel(rec);
+    if (lvl === "red") td.classList.add("dateAlertRed");
+    if (lvl === "yellow") td.classList.add("dateAlertYellow");
+    return td;
   }
 
   function tdWrap(text, muted=false){
