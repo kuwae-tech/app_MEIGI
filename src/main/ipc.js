@@ -221,12 +221,16 @@ const buildExportHtml = ({ title, meta, columns, rows, columnKeys, statusColorMa
       overflow-wrap: normal;
       line-height: 1.2;
     }
+    .col-date {
+      white-space: pre-line;
+      font-variant-numeric: tabular-nums;
+      font-weight: 400;
+    }
     .status-cell {
       font-weight: 600;
     }
     ${statusStyles}
     .date-highlight {
-      font-weight: 600;
     }
     ${dateStyles}
     thead { display: table-header-group; }
