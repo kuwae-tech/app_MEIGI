@@ -41,30 +41,41 @@
     const fullText = baseFullText.replace(/\s*→\s*/g, ' → ');
 
     if (!normalized.length) {
-      return { isCompact: false, year: '', md: '', fullText };
+      return { blocks: [], fullText, lineText: fullText };
     }
 
-    const years = new Set(normalized.map((iso) => iso.slice(0, 4)));
-    if (years.size !== 1) {
-      return { isCompact: false, year: '', md: '', fullText };
-    }
-
-    const year = normalized[0].slice(0, 4);
-    const mdParts = [];
-    let lastMonth = null;
+    const blocks = [];
+    let currentBlock = null;
+    let currentYear = null;
+    let currentMonth = null;
 
     for (const iso of normalized) {
+      const year = iso.slice(0, 4);
       const month = iso.slice(5, 7);
       const day = iso.slice(8, 10);
-      if (lastMonth === month) {
-        mdParts.push(day);
+
+      if (year !== currentYear) {
+        currentYear = year;
+        currentMonth = null;
+        currentBlock = { year, lines: [] };
+        blocks.push(currentBlock);
+      }
+
+      if (month !== currentMonth) {
+        currentMonth = month;
+        currentBlock.lines.push(`${month}/${day}`);
       } else {
-        mdParts.push(`${month}/${day}`);
-        lastMonth = month;
+        const lastIndex = currentBlock.lines.length - 1;
+        currentBlock.lines[lastIndex] = `${currentBlock.lines[lastIndex]},${day}`;
       }
     }
 
-    return { isCompact: true, year, md: mdParts.join(', '), fullText };
+    const lineText = blocks.map((block) => {
+      const lines = block.lines.length ? block.lines : [];
+      return [block.year, ...lines].join('\n');
+    }).join('\n');
+
+    return { blocks, fullText, lineText };
   };
 
   const parsePerformanceDates = (raw, opts = {}) => {

@@ -315,9 +315,19 @@
     /* Date alerts */
     .dateAlertRed{background:var(--date-alert-red-bg)}
     .dateAlertYellow{background:var(--date-alert-yellow-bg)}
-    .date-cell{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
-    .date-year{white-space:nowrap;flex:0 0 auto;font-size:11px;color:#6b7280}
-    .date-md{white-space:normal;overflow-wrap:anywhere;word-break:break-word;font-size:13px;font-weight:600;line-height:1.2}
+    .date-cell{
+      display:flex;
+      flex-direction:column;
+      align-items:flex-start;
+      gap:4px;
+      font-weight:400;
+      font-variant-numeric: tabular-nums;
+    }
+    .date-block{display:flex;flex-direction:column;gap:2px}
+    .date-block + .date-block{margin-top:4px}
+    .date-year{white-space:nowrap;flex:0 0 auto;font-size:11px;color:#6b7280;font-weight:400}
+    .date-lines{display:flex;flex-direction:column;gap:2px;font-size:13px;line-height:1.2;font-weight:400}
+    .date-line{white-space:normal;overflow-wrap:anywhere;word-break:break-word;font-weight:400}
 
     /* Status popover (inline picker) */
     .statusPopover{
@@ -2911,7 +2921,8 @@ function daysUntilKey(k){
       return normalizeStatus(rec.status) || "(未設定)";
     }
     if (key === "dateText"){
-      return rec.dateText || "";
+      const display = buildDateDisplay(rec.dates_iso || [], rec.dateText || "");
+      return display.lineText || "";
     }
     return (rec[key] ?? "").toString();
   }
@@ -3506,23 +3517,35 @@ tbody.appendChild(tr);
     const display = buildDateDisplay(rec.dates_iso || [], rec.dateText || "");
     let td;
 
-    if (display.isCompact && display.year && display.md){
+    if (display.blocks && display.blocks.length){
       td = document.createElement("td");
       td.classList.add("muted");
       const wrap = document.createElement("div");
       wrap.className = "date-cell";
       wrap.title = display.fullText || "";
 
-      const year = document.createElement("span");
-      year.className = "date-year";
-      appendHighlightedText(year, display.year);
+      for (const block of display.blocks){
+        const blockWrap = document.createElement("div");
+        blockWrap.className = "date-block";
 
-      const md = document.createElement("span");
-      md.className = "date-md";
-      appendHighlightedText(md, display.md);
+        const year = document.createElement("div");
+        year.className = "date-year";
+        appendHighlightedText(year, block.year);
 
-      wrap.appendChild(year);
-      wrap.appendChild(md);
+        const linesWrap = document.createElement("div");
+        linesWrap.className = "date-lines";
+        for (const line of block.lines){
+          const lineEl = document.createElement("div");
+          lineEl.className = "date-line";
+          appendHighlightedText(lineEl, line);
+          linesWrap.appendChild(lineEl);
+        }
+
+        blockWrap.appendChild(year);
+        blockWrap.appendChild(linesWrap);
+        wrap.appendChild(blockWrap);
+      }
+
       td.appendChild(wrap);
     } else {
       td = tdWrap(display.fullText || "", true);
