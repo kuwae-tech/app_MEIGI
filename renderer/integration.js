@@ -860,6 +860,7 @@ end $$;`;
 
   const initSettingsModal = () => {
     $('settingsBtn')?.addEventListener('click', () => {
+      console.log('[UI] open settings modal');
       $('settingsBackdrop').style.display = 'flex';
       log(TAGS.settings, 'open');
       loadLogs().then(renderLogList);
