@@ -78,8 +78,52 @@
     return { blocks, fullText, lineText };
   };
 
+  const excelSerialToDateParts = (value) => {
+    if (!Number.isFinite(value)) return null;
+    const serial = Math.floor(value);
+    if (serial <= 0) return null;
+    if (typeof XLSX !== 'undefined' && XLSX?.SSF?.parse_date_code) {
+      const parsed = XLSX.SSF.parse_date_code(serial);
+      if (parsed && parsed.y && parsed.m && parsed.d) {
+        return { y: parsed.y, m: parsed.m, d: parsed.d };
+      }
+    }
+    const epoch = Date.UTC(1899, 11, 30);
+    const date = new Date(epoch + serial * 86400000);
+    if (Number.isNaN(date.valueOf())) return null;
+    return { y: date.getUTCFullYear(), m: date.getUTCMonth() + 1, d: date.getUTCDate() };
+  };
+
+  const normalizeRawDateInput = (raw) => {
+    if (raw instanceof Date && !Number.isNaN(raw.valueOf())) {
+      return `${raw.getFullYear()}/${raw.getMonth() + 1}/${raw.getDate()}`;
+    }
+    if (typeof raw === 'number') {
+      const parts = excelSerialToDateParts(raw);
+      if (parts) {
+        return `${parts.y}/${parts.m}/${parts.d}`;
+      }
+    }
+    return String(raw ?? '');
+  };
+
+  const normalizeDateText = (value) => {
+    let text = String(value ?? '');
+    text = text.replace(/\u3000/g, ' ');
+    text = text.replace(/\r\n?/g, '\n');
+    text = text.replace(/[／]/g, '/');
+    text = text.replace(/[‐‑‒–—−]/g, '-');
+    text = text.replace(/[〜～]/g, ',');
+    text = text.replace(/[（(][^）)]*[）)]/g, ' ');
+    text = text.replace(/\s+/g, ' ').trim();
+    text = text.replace(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/g, '$1/$2/$3');
+    text = text.replace(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/g, '$1/$2');
+    return text;
+  };
+
   const parsePerformanceDates = (raw, opts = {}) => {
-    const text = String(raw ?? '').replace(/\u3000/g, ' ').trim();
+    const normalizedRaw = normalizeRawDateInput(raw);
+    const text = normalizeDateText(normalizedRaw);
     if (!text) return { isoDates: [], displayDates: [] };
 
     const tokens = text.split(/[,\s、]+/).map((t) => t.trim()).filter(Boolean);
@@ -120,6 +164,22 @@
         if (currentYear == null || currentMonth == null) continue;
         if (!isValidDate(currentYear, currentMonth, day)) continue;
         results.push(toIsoDate(currentYear, currentMonth, day));
+      }
+    }
+
+    if (!results.length) {
+      const scanResults = [];
+      const ymdRe = /(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/g;
+      let match;
+      while ((match = ymdRe.exec(text)) !== null) {
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        if (!isValidDate(year, month, day)) continue;
+        scanResults.push(toIsoDate(year, month, day));
+      }
+      if (scanResults.length) {
+        results.push(...scanResults);
       }
     }
 

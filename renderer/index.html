@@ -1238,6 +1238,16 @@
     return ymdKey(Number(match[1]), Number(match[2]), Number(match[3]));
   }
   function pad2(v){ return String(v).padStart(2, "0"); }
+  function normalizeDateTextInput(raw){
+    let s = String(raw ?? "");
+    s = s.replace(/\u3000/g, " ");
+    s = s.replace(/\uFFFD/g, "");
+    s = s.replace(/\r\n?/g, "\n");
+    s = s.replace(/\n+/g, " ");
+    s = s.replace(/[\u0000-\u001F\u007F]/g, " ");
+    s = s.replace(/\s+/g, " ").trim();
+    return s;
+  }
   function normalizeDateRawInput(raw){
     if (raw instanceof Date && !isNaN(raw.valueOf())){
       return `${raw.getFullYear()}/${pad2(raw.getMonth()+1)}/${pad2(raw.getDate())}`;
@@ -1248,7 +1258,7 @@
         return `${dc.y}/${pad2(dc.m)}/${pad2(dc.d)}`;
       }
     }
-    return normalizeText(raw);
+    return normalizeDateTextInput(raw);
   }
   function buildPerformanceDateFields(raw, opts = {}){
     const dateRaw = normalizeDateRawInput(raw);
@@ -2047,7 +2057,7 @@ function daysUntilKey(k){
     return rows;
   }
 
-  function parseRecordFromRow(row){
+  function parseRecordFromRow(row, opts = {}){
     const id = normalizeText(row["ID"]);
     if (!id) return null;
 
@@ -2058,9 +2068,20 @@ function daysUntilKey(k){
     const venue = normalizeText(row["会場名"]);
     const memo = normalizeText(row["メモ"]);
 
-    const dateInfo = buildPerformanceDateFields(row["公演日"], { defaultYear: nowLocal().getFullYear() });
-    if (dateInfo.date_raw){
-      console.debug(`[IMPORT] performance date raw="${dateInfo.date_raw}" iso=${dateInfo.dates_iso.length}`);
+    const dateInfo = buildPerformanceDateFields(row["公演日"], { defaultYear: opts.defaultYear ?? nowLocal().getFullYear() });
+    const rowNumber = Number.isInteger(opts.rowIndex) ? opts.rowIndex + 2 : null;
+    if (opts.debug && opts.debug.count < opts.debug.limit){
+      console.debug(`[IMPORT] performance date row=${rowNumber ?? "?"} raw="${dateInfo.date_raw}" parsed="${dateInfo.dateText}"`);
+      opts.debug.count += 1;
+    }
+    if (dateInfo.date_raw && !dateInfo.dates_iso.length){
+      console.warn("[IMPORT] performance date parse failed", {
+        file: opts.fileName || "",
+        sheet: opts.sheetName || "",
+        row: rowNumber,
+        column: "公演日",
+        raw: dateInfo.date_raw
+      });
     }
     const presaleParsed = parseDateCell(row["前売日"]);
 
@@ -2229,8 +2250,15 @@ function daysUntilKey(k){
 
       pushUndoSnapshot();
 
-      for (const row of rowsMain){
-        const incoming = parseRecordFromRow(row);
+      const dateDebug = { count: 0, limit: 20 };
+      for (const [rowIndex, row] of rowsMain.entries()){
+        const incoming = parseRecordFromRow(row, {
+          defaultYear: nowLocal().getFullYear(),
+          rowIndex,
+          fileName: file?.name || "",
+          sheetName: mainSheet,
+          debug: dateDebug
+        });
         if (!incoming) continue;
         if (endedIds.has(incoming.id)) incoming.endedFromSheet = true;
 
