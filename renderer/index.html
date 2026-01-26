@@ -671,7 +671,6 @@
       <div class="settingsTabs" id="settingsTabs">
         <button data-tab="share" class="active">共有（Supabase）</button>
         <button data-tab="notify">通知</button>
-        <button data-tab="backup">バックアップ/復元</button>
         <button data-tab="log">ログ</button>
       </div>
     </div>
@@ -682,8 +681,8 @@
           <input id="supabaseUrlInput" type="text" placeholder="https://xxxx.supabase.co">
         </div>
         <div class="fieldRow">
-          <label for="supabaseKeyInput">anon key</label>
-          <input id="supabaseKeyInput" type="password" placeholder="eyJ...">
+          <label for="supabaseKeyInput">Publishable key</label>
+          <input id="supabaseKeyInput" type="password" placeholder="sb_publishable_...">
         </div>
         <div class="inlineFields">
           <button class="btn btnSecondary" id="supabaseTestBtn">接続テスト</button>
@@ -779,33 +778,6 @@
         <div class="hintText">未起動時間の通知は次回起動時に1回だけ表示します。</div>
       </div>
 
-      <div class="settingsSection" id="settingsBackup">
-        <div class="fieldRow">
-          <label for="backupRetentionDays">バックアップ保持日数</label>
-          <input id="backupRetentionDays" type="number" min="1" max="365" value="7">
-        </div>
-        <div class="inlineFields">
-          <button class="btn btnSecondary" id="backupCleanupBtn">今すぐクリーンアップ</button>
-        </div>
-        <div class="divider"></div>
-        <div class="fieldRow">
-          <label>802 バックアップ</label>
-          <div class="backupList" id="backupList802"></div>
-          <div class="inlineFields">
-            <button class="btn btnPrimary" id="restoreLatest802">直近から復元</button>
-            <button class="btn btnGhost" id="restorePick802">選択して復元</button>
-          </div>
-        </div>
-        <div class="fieldRow">
-          <label>COCOLO バックアップ</label>
-          <div class="backupList" id="backupListCOCOLO"></div>
-          <div class="inlineFields">
-            <button class="btn btnPrimary" id="restoreLatestCOCOLO">直近から復元</button>
-            <button class="btn btnGhost" id="restorePickCOCOLO">選択して復元</button>
-          </div>
-        </div>
-        <div class="hintText">復元はローカルのみ反映されます。保存するまで共有に反映されません。</div>
-      </div>
       <div class="settingsSection logSection" id="settingsLog">
         <div class="fieldRow settingsLogSearch">
           <label for="settingsLogSearch">検索</label>

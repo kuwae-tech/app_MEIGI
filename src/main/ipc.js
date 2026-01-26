@@ -21,6 +21,11 @@ const defaultSettings = {
   }
 };
 
+const SUPABASE_PLACEHOLDER = {
+  url: 'YOUR_SUPABASE_URL',
+  anonKey: 'YOUR_SUPABASE_ANON_KEY'
+};
+
 let supabaseDefaultsPromise = null;
 const loadSupabaseDefaults = async () => {
   if (!supabaseDefaultsPromise) {
@@ -63,13 +68,24 @@ const deepMerge = (base, next) => {
 };
 
 const getSettings = async () => {
-  const stored = store.get('settings');
+  const stored = store.get('settings') || {};
   const settings = deepMerge(defaultSettings, stored);
   const defaults = await loadSupabaseDefaults();
-  if (defaults) {
-    if (!settings.supabaseUrl && defaults.url) settings.supabaseUrl = defaults.url;
-    if (!settings.supabaseAnonKey && defaults.anonKey) settings.supabaseAnonKey = defaults.anonKey;
-  }
+  const storedUrl = typeof stored.supabaseUrl === 'string' ? stored.supabaseUrl.trim() : '';
+  const storedKey = typeof stored.supabaseAnonKey === 'string' ? stored.supabaseAnonKey.trim() : '';
+  const defaultUrl = typeof defaults?.url === 'string' ? defaults.url.trim() : '';
+  const defaultKey = typeof defaults?.anonKey === 'string' ? defaults.anonKey.trim() : '';
+  const hasStoredUrl = !!storedUrl;
+  const hasStoredKey = !!storedKey;
+  const hasDefaultUrl = !!defaultUrl && defaultUrl !== SUPABASE_PLACEHOLDER.url;
+  const hasDefaultKey = !!defaultKey && defaultKey !== SUPABASE_PLACEHOLDER.anonKey;
+
+  if (!hasStoredUrl && hasDefaultUrl) settings.supabaseUrl = defaultUrl;
+  if (!hasStoredKey && hasDefaultKey) settings.supabaseAnonKey = defaultKey;
+
+  const urlSource = hasStoredUrl ? 'saved' : hasDefaultUrl ? 'default' : 'placeholder';
+  const keySource = hasStoredKey ? 'saved' : hasDefaultKey ? 'default' : 'placeholder';
+  console.log(`[SETTINGS] supabase source url=${urlSource} key=${keySource}`);
   return settings;
 };
 

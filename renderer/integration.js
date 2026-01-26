@@ -24,6 +24,8 @@
     }
   };
 
+  const ENABLE_BACKUP_TAB = false;
+
   const defaultSettings = {
     supabaseUrl: '',
     supabaseAnonKey: '',
@@ -876,14 +878,13 @@ end $$;`;
       if (!btn) return;
       $('settingsTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
       const tab = btn.dataset.tab;
-      ['share', 'notify', 'backup', 'log'].forEach((key) => {
+      const tabKeys = ENABLE_BACKUP_TAB ? ['share', 'notify', 'backup', 'log'] : ['share', 'notify', 'log'];
+      tabKeys.forEach((key) => {
         const section = key === 'share'
           ? $('settingsShare')
           : key === 'notify'
             ? $('settingsNotify')
-            : key === 'backup'
-              ? $('settingsBackup')
-              : $('settingsLog');
+            : $('settingsLog');
         section.classList.toggle('active', key === tab);
       });
       if (tab === 'log') {
@@ -1093,29 +1094,31 @@ end $$;`;
       await updateSettings({ notify: { ...settings.notify, intervalHours: Number(e.target.value) } });
     });
 
-    on('backupRetentionDays', 'change', async (e) => {
-      await updateSettings({ backup: { retentionDays: Number(e.target.value) } });
-    });
-    on('backupCleanupBtn', 'click', async () => {
-      const retentionDays = settings.backup.retentionDays || 7;
-      await bridge.backups.cleanup({ retentionDays });
-      await refreshBackupLists();
-    });
+    if (ENABLE_BACKUP_TAB) {
+      on('backupRetentionDays', 'change', async (e) => {
+        await updateSettings({ backup: { retentionDays: Number(e.target.value) } });
+      });
+      on('backupCleanupBtn', 'click', async () => {
+        const retentionDays = settings.backup.retentionDays || 7;
+        await bridge.backups.cleanup({ retentionDays });
+        await refreshBackupLists();
+      });
 
-    on('restoreLatest802', 'click', async () => {
-      const list = await bridge.backups.list('802');
-      await restoreBackup(list[0]?.path);
-    });
-    on('restoreLatestCOCOLO', 'click', async () => {
-      const list = await bridge.backups.list('COCOLO');
-      await restoreBackup(list[0]?.path);
-    });
-    on('restorePick802', 'click', async () => {
-      await restoreBackup(selectedBackups['802']);
-    });
-    on('restorePickCOCOLO', 'click', async () => {
-      await restoreBackup(selectedBackups['COCOLO']);
-    });
+      on('restoreLatest802', 'click', async () => {
+        const list = await bridge.backups.list('802');
+        await restoreBackup(list[0]?.path);
+      });
+      on('restoreLatestCOCOLO', 'click', async () => {
+        const list = await bridge.backups.list('COCOLO');
+        await restoreBackup(list[0]?.path);
+      });
+      on('restorePick802', 'click', async () => {
+        await restoreBackup(selectedBackups['802']);
+      });
+      on('restorePickCOCOLO', 'click', async () => {
+        await restoreBackup(selectedBackups['COCOLO']);
+      });
+    }
   };
 
   const initAuthState = async () => {
@@ -1192,7 +1195,10 @@ end $$;`;
     $('notifyTimeWeekly').value = settings.notify.timeWeekly || '09:30';
     $('notifyTimeDaily').value = settings.notify.timeDaily || '09:30';
     $('notifyIntervalHours').value = String(settings.notify.intervalHours || 6);
-    $('backupRetentionDays').value = String(settings.backup.retentionDays || 7);
+    const backupRetention = $('backupRetentionDays');
+    if (backupRetention) {
+      backupRetention.value = String(settings.backup.retentionDays || 7);
+    }
   };
 
   const init = async () => {
