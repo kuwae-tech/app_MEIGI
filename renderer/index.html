@@ -362,6 +362,40 @@
       justify-content:center;
       min-width:0;
     }
+    .memoCell{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      min-width:0;
+    }
+    .memoSnippet{
+      flex:1;
+      min-width:0;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      font-size:12.5px;
+      color:var(--sub);
+      cursor:pointer;
+    }
+    .memoSnippetEmpty{opacity:.45}
+    .memoMiniBtn{
+      width:26px;
+      height:24px;
+      border-radius:8px;
+      border:1px solid var(--border);
+      background:transparent;
+      color:#1d1d1f;
+      font-size:13px;
+      line-height:1;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      padding:0;
+      opacity:.7;
+    }
+    .memoCell:hover .memoSnippet{text-decoration:underline;text-decoration-color:rgba(29,29,31,.25)}
+    .memoCell:hover .memoMiniBtn{opacity:1}
 
     /* Print to PDF */
     #printArea{display:none}
@@ -3430,10 +3464,28 @@ function daysUntilKey(k){
 
       // メモ
       const tdMemo = document.createElement("td");
-const memoBtn = document.createElement("button");
-      memoBtn.className = "btn btnGhost btnPillSmall";
-      memoBtn.textContent = rec.memo ? "編集" : "追加";
-      memoBtn.title = rec.memo ? rec.memo : "";
+      const memoCell = document.createElement("div");
+      memoCell.className = "memoCell";
+
+      const memoSnippet = document.createElement("span");
+      memoSnippet.className = `memoSnippet${rec.memo ? "" : " memoSnippetEmpty"}`;
+      memoSnippet.textContent = rec.memo ? rec.memo : "—";
+      memoSnippet.addEventListener("click", (e)=>{
+        e.stopPropagation();
+        openMemoModal(rec.id);
+      });
+      memoSnippet.addEventListener("mouseenter", (e)=>{
+        if (!rec.memo) return;
+        showHoverTip(rec.memo, e.currentTarget);
+      });
+      memoSnippet.addEventListener("mouseleave", ()=>{ hideHoverTip(); });
+      memoCell.appendChild(memoSnippet);
+
+      const memoBtn = document.createElement("button");
+      memoBtn.type = "button";
+      memoBtn.className = "memoMiniBtn";
+      memoBtn.textContent = rec.memo ? "✎" : "＋";
+      memoBtn.title = rec.memo ? "メモを編集" : "メモを追加";
       memoBtn.addEventListener("click", (e)=>{
         e.stopPropagation();
         openMemoModal(rec.id);
@@ -3443,7 +3495,9 @@ const memoBtn = document.createElement("button");
         showHoverTip(rec.memo, e.currentTarget);
       });
       memoBtn.addEventListener("mouseleave", ()=>{ hideHoverTip(); });
-      tdMemo.appendChild(memoBtn);
+      memoCell.appendChild(memoBtn);
+
+      tdMemo.appendChild(memoCell);
       tr.appendChild(tdMemo);
 
       // 削除（申請なしのみ）
