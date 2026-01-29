@@ -131,10 +131,10 @@ const buildExportHtml = ({ title, meta, columns, rows, columnKeys, statusColorMa
     artist: '120px',
     title: '180px',
     venue: '120px',
-    presale: '85px',
+    presale: '75px',
     company: '130px',
     person: '90px',
-    memo: 'auto'
+    memo: '150px'
   };
   const headerCells = columns.map((label, index) => {
     const key = Array.isArray(columnKeys) ? columnKeys[index] : null;
