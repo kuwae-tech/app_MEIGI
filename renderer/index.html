@@ -233,6 +233,25 @@
     .modalBody{padding:14px;display:flex;flex-direction:column;gap:12px;max-height:min(70vh, 620px);overflow:auto}
     .modalFoot{padding:12px 14px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border);background:#fbfbfd}
 
+    .diffSummary{font-size:13px;font-weight:800;color:#1d1d1f}
+    .diffSection{display:flex;flex-direction:column;gap:8px}
+    .diffSectionTitle{font-size:12px;font-weight:800;color:#4b5563}
+    .diffList{display:flex;flex-direction:column;gap:8px}
+    .diffRow{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      padding:10px 12px;
+      border:1px solid var(--border);
+      border-radius:12px;
+      background:#fff;
+    }
+    .diffInfo{min-width:0;display:flex;flex-direction:column;gap:4px}
+    .diffPrimary{font-size:13px;font-weight:800;color:#111}
+    .diffSecondary{font-size:12px;color:var(--sub);line-height:1.3}
+    .diffBadge{min-width:88px;padding:6px 10px;font-size:12px;font-weight:800}
+
     .field{display:flex;flex-direction:column;gap:6px;min-width:0}
     .label{font-size:11.5px;color:var(--sub)}
     input[type="text"], input[type="date"], select, textarea{
@@ -277,10 +296,10 @@
     .col-artist{width:140px}
     .col-title{width:190px}
     .col-venue{width:130px}
-    .col-presale{width:95px}
+    .col-presale{width:75px}
     .col-company{width:140px}
     .col-person{width:100px}
-    .col-memo{width:70px}
+    .col-memo{width:150px}
     .col-del{width:140px}
     /* Main content card must be a flex column to allow inner (table) scrolling */
     .mainCard{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
@@ -444,7 +463,7 @@
       .printTable .col-artist{width:130px}
       .printTable .col-title{width:200px}
       .printTable .col-venue{width:130px}
-      .printTable .col-presale{width:90px}
+      .printTable .col-presale{width:75px}
       .printTable .col-company{width:140px}
       .printTable .col-person{width:95px}
       .printTable .col-memo{width:auto}
@@ -2216,6 +2235,87 @@ function daysUntilKey(k){
     return updated;
   }
 
+  function formatDiffDate(rec){
+    const display = buildDateDisplay(rec.dates_iso || [], rec.dateText || "");
+    return display.fullText || display.lineText || rec.dateText || "";
+  }
+
+  function buildDiffRow(rec){
+    const row = document.createElement("div");
+    row.className = "diffRow";
+
+    const info = document.createElement("div");
+    info.className = "diffInfo";
+
+    const primary = document.createElement("div");
+    primary.className = "diffPrimary";
+    primary.textContent = rec.artist || "(アーティスト未設定)";
+
+    const dateLine = document.createElement("div");
+    dateLine.className = "diffSecondary";
+    const dateText = formatDiffDate(rec) || "公演日未設定";
+    dateLine.textContent = dateText;
+
+    info.appendChild(primary);
+    info.appendChild(dateLine);
+
+    if (rec.title){
+      const titleLine = document.createElement("div");
+      titleLine.className = "diffSecondary";
+      titleLine.textContent = rec.title;
+      info.appendChild(titleLine);
+    }
+
+    const badge = document.createElement("span");
+    badge.className = `${statusBadgeClass(rec.status)} diffBadge`;
+    badge.textContent = normalizeStatus(rec.status) || "未設定";
+
+    row.appendChild(info);
+    row.appendChild(badge);
+    return row;
+  }
+
+  function showImportDiffModal(newRecords, updatedRecords){
+    const body = document.createElement("div");
+
+    const summary = document.createElement("div");
+    summary.className = "diffSummary";
+    summary.textContent = `新規 ${newRecords.length}件 / 更新 ${updatedRecords.length}件`;
+    body.appendChild(summary);
+
+    const appendSection = (title, records)=>{
+      const section = document.createElement("div");
+      section.className = "diffSection";
+      const head = document.createElement("div");
+      head.className = "diffSectionTitle";
+      head.textContent = title;
+      section.appendChild(head);
+      const list = document.createElement("div");
+      list.className = "diffList";
+      for (const rec of records){
+        list.appendChild(buildDiffRow(rec));
+      }
+      section.appendChild(list);
+      body.appendChild(section);
+    };
+
+    if (newRecords.length){
+      appendSection("新規", newRecords);
+    }
+    if (updatedRecords.length){
+      appendSection("更新", updatedRecords);
+    }
+
+    const foot = document.createElement("div");
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "btn btnPrimary";
+    closeBtn.textContent = "閉じる";
+    closeBtn.addEventListener("click", closeModal);
+    foot.appendChild(closeBtn);
+
+    openModal("取り込み差分", body, foot);
+  }
+
   async function importExcelFile(file){
     logData(`import start ${file?.name || "unknown"}`);
     diagNoteEvent("import-start");
@@ -2239,6 +2339,10 @@ function daysUntilKey(k){
 
       const notices = [];
       let newCount=0, updCount=0, statusUpd=0, statusRejected=0;
+      const diffNew = [];
+      const diffUpdated = [];
+      const diffNewIds = new Set();
+      const diffUpdatedIds = new Set();
 
       const mainSheet = wb.SheetNames.includes("製作状況") ? "製作状況" : getSheetByNameOrFirst(wb,"製作状況");
       if (mainSheet !== "製作状況"){
@@ -2301,11 +2405,19 @@ function daysUntilKey(k){
         if (!existing){
           app.recordsById[id] = incoming;
           newCount++;
+          diffNew.push(incoming);
+          diffNewIds.add(id);
         } else {
           const beforeStatus = existing.status;
           const localNotices = {};
           const updated = mergeRecords(existing, incoming, localNotices);
-          if (updated) updCount++;
+          if (updated){
+            updCount++;
+            if (!diffUpdatedIds.has(id) && !diffNewIds.has(id)){
+              diffUpdated.push(existing);
+              diffUpdatedIds.add(id);
+            }
+          }
           if (existing.status !== beforeStatus && incoming.status !== "") statusUpd++;
           if (localNotices._rejectedStatus) statusRejected += localNotices._rejectedStatus;
         }
@@ -2317,6 +2429,10 @@ function daysUntilKey(k){
           if (app.recordsById[id] && !app.recordsById[id].endedFromSheet){
             app.recordsById[id].endedFromSheet = true;
             updCount++;
+            if (!diffUpdatedIds.has(id) && !diffNewIds.has(id)){
+              diffUpdated.push(app.recordsById[id]);
+              diffUpdatedIds.add(id);
+            }
           }
         }
       }
@@ -2328,6 +2444,9 @@ function daysUntilKey(k){
       // 注意欄は表示しない（要望により廃止）
 
       render();
+      if (diffNew.length || diffUpdated.length){
+        showImportDiffModal(diffNew, diffUpdated);
+      }
       logData(`import ok rows=${rowsMain.length}`);
       emitLogEvent({
         action: "IMPORT_SUMMARY",
@@ -2828,11 +2947,36 @@ function daysUntilKey(k){
     { key:"venue", label:"会場" },
     { key:"presaleText", label:"前売り日" },
     { key:"company", label:"申込社" },
-    { key:"person", label:"担当者" },
-    { key:"memo", label:"メモ" }
+    { key:"person", label:"担当者" }
   ];
 
   const exportDefaultOn = new Set(["status","dateText","artist","company"]);
+  const EXPORT_STORAGE_KEY = "meigi.exportColumnsState";
+
+  function loadExportColumnState(){
+    try{
+      const raw = localStorage.getItem(EXPORT_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return null;
+      return parsed.filter((key)=> typeof key === "string");
+    }catch{
+      return null;
+    }
+  }
+
+  function saveExportColumnState(keys){
+    try{
+      localStorage.setItem(EXPORT_STORAGE_KEY, JSON.stringify(keys));
+    }catch{}
+  }
+
+  function persistExportColumnState(checks){
+    const checkedKeys = EXPORT_COLUMNS
+      .filter((c)=> checks.get(c.key)?.checked)
+      .map((c)=> c.key);
+    saveExportColumnState(checkedKeys);
+  }
 
   function formatExportDateTime(dt){
     const yyyy = dt.getFullYear();
@@ -3213,12 +3357,14 @@ function daysUntilKey(k){
     colList.className = "statusFilter";
 
     const checks = new Map();
+    const savedState = loadExportColumnState();
+    const savedSet = savedState ? new Set(savedState) : null;
     for (const c of EXPORT_COLUMNS){
       const lb = document.createElement("label");
       lb.className = "chk";
       const cb = document.createElement("input");
       cb.type = "checkbox";
-      cb.checked = exportDefaultOn.has(c.key);
+      cb.checked = savedSet ? savedSet.has(c.key) : exportDefaultOn.has(c.key);
       checks.set(c.key, cb);
       lb.appendChild(cb);
       lb.appendChild(document.createTextNode(c.label));
@@ -3247,6 +3393,7 @@ function daysUntilKey(k){
         alert("書き出し/コピーする項目を選択してください。");
         return;
       }
+      persistExportColumnState(checks);
 
       const lines = [];
       const BUL = "　・"; // 全角スペース＋中黒点
@@ -3304,6 +3451,7 @@ function daysUntilKey(k){
         alert("書き出しする項目を選択してください。");
         return;
       }
+      persistExportColumnState(checks);
       await doExportPdf(view, chosen);
     });
 
@@ -3316,6 +3464,7 @@ function daysUntilKey(k){
         alert("書き出しする項目を選択してください。");
         return;
       }
+      persistExportColumnState(checks);
       await doExportExcel(view, chosen);
     });
 
